@@ -1625,6 +1625,7 @@ function PlaygroundTab() {
     const f  = tableState.filters || {};
     const sq = normalizeText(f.search);
     const st = normalizeText(f.status);
+    const teamF = f.team;
     const dr = f.created_at || {};
     const start = parseDateOnly(dr.start);
     const end   = parseDateOnly(dr.end);
@@ -1634,6 +1635,16 @@ function PlaygroundTab() {
         if (!hay.includes(sq)) return false;
       }
       if (st && normalizeText(row.status) !== st) return false;
+
+      // Team filter: support single-value and multi-select (array)
+      if (Array.isArray(teamF)) {
+        if (teamF.length > 0) {
+          const allowed = new Set(teamF.map((t) => String(t || "").trim().toLowerCase()));
+          if (!allowed.has(normalizeText(row.team))) return false;
+        }
+      } else if (teamF) {
+        if (normalizeText(row.team) !== normalizeText(teamF)) return false;
+      }
       const d = parseDateOnly(row.created_at);
       if (start && d && d < start) return false;
       if (end   && d && d > end)   return false;

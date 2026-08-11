@@ -1,18 +1,33 @@
 "use client";
 
-import { useMemo, useState } from "react";
+import { forwardRef, useMemo, useState } from "react";
 import Form from "react-bootstrap/Form";
 import { Dropdown as BootstrapDropdown } from "react-bootstrap";
+
+const MultiSelectToggle = forwardRef(({ children, onClick, className = "", disabled, ...props }, ref) => (
+  <button
+    type="button"
+    ref={ref}
+    className={className}
+    disabled={disabled}
+    onClick={(event) => {
+      event.preventDefault();
+      onClick?.(event);
+    }}
+    {...props}
+  >
+    {children}
+  </button>
+));
 
 function MultiSelectDropdown({
   options = [],
   selectedValues = [],
   onChange,
   placeholder = "Select...",
-  buttonVariant = "secondary",
-  buttonSize = "sm",
   menuStyle,
   className = "",
+  disabled = false,
   ...props
 }) {
   const [show, setShow] = useState(false);
@@ -42,7 +57,12 @@ function MultiSelectDropdown({
       className={className}
       {...props}
     >
-      <BootstrapDropdown.Toggle variant={buttonVariant} size={buttonSize}>
+      <BootstrapDropdown.Toggle
+        as={MultiSelectToggle}
+        disabled={disabled}
+        className={["psb-ui-multiselect-toggle", "form-select", className].filter(Boolean).join(" ")}
+        style={{ textAlign: "left" }}
+      >
         {selectedLabel}
       </BootstrapDropdown.Toggle>
       <BootstrapDropdown.Menu renderOnMount style={{ minWidth: 240, padding: 8, ...menuStyle }}>
