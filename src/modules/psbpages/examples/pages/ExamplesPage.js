@@ -53,6 +53,9 @@ const DEMO_STATUS_OPTIONS = STATUS_OPTIONS.length > 0
       { label: "Suspended", value: "suspended" },
     ];
 
+// `TEAM_OPTIONS` defined later in the file is used for forms and demos —
+// remove duplicate here and rely on the centralized definition further down.
+
 const TABLE_SOURCE_ROWS = [
   { id: 1, employee_code: "EMP-1101", full_name: "Avery Nguyen",   email: "avery.nguyen@psbuniverse.local",   team: "Platform",   role: "admin",   status: "active",    created_at: "2026-03-22" },
   { id: 2, employee_code: "EMP-1102", full_name: "Jordan Patel",   email: "jordan.patel@psbuniverse.local",   team: "Risk",       role: "manager", status: "pending",   created_at: "2026-03-18" },
@@ -1588,6 +1591,7 @@ function PlaygroundTab() {
 
   const filterConfig = useMemo(() => createFilterConfig([
     { key: "status",     label: "Status",       type: TABLE_FILTER_TYPES.SELECT,    options: STATUS_OPTIONS },
+    { key: "team",       label: "Team",         type: TABLE_FILTER_TYPES.SELECT,    multiple: true, options: TEAM_OPTIONS },
     { key: "created_at", label: "Created Date", type: TABLE_FILTER_TYPES.DATERANGE },
   ]), []);
 
@@ -2570,12 +2574,12 @@ const actions = [
 // ---------------------------------------------------------------------------
 
 const TEAM_OPTIONS = [
-  { label: "Platform",   value: "platform"   },
-  { label: "Risk",       value: "risk"       },
-  { label: "Operations", value: "operations" },
-  { label: "Finance",    value: "finance"    },
-  { label: "Support",    value: "support"    },
-  { label: "Audit",      value: "audit"      },
+  { label: "Platform",   value: "Platform"   },
+  { label: "Risk",       value: "Risk"       },
+  { label: "Operations", value: "Operations" },
+  { label: "Finance",    value: "Finance"    },
+  { label: "Support",    value: "Support"    },
+  { label: "Audit",      value: "Audit"      },
 ];
 
 const ROLE_OPTIONS = [
