@@ -10,6 +10,7 @@ import {
   Dropdown,
   Input,
   Modal,
+  MultiSelectDropdown,
   SearchBar,
   StatusBadge,
   TableZ,
@@ -1563,9 +1564,10 @@ function PlaygroundTab() {
   const [inputValue,     setInputValue]     = useState("Jordan Carter");
   const [inputInvalid,   setInputInvalid]   = useState(false);
   const [searchValue,    setSearchValue]    = useState("");
-  const [dropdownValue,  setDropdownValue]  = useState(null);
-  const [dropdownShow,   setDropdownShow]   = useState(false);
-  const [modalOpen,      setModalOpen]      = useState(false);
+  const [dropdownValue,         setDropdownValue]         = useState(null);
+  const [dropdownShow,          setDropdownShow]          = useState(false);
+  const [multiDropdownValues,   setMultiDropdownValues]   = useState([]);
+  const [modalOpen,             setModalOpen]             = useState(false);
   const [modalSaving,    setModalSaving]    = useState(false);
   const [toastCount,     setToastCount]     = useState(0);
   const [cardModalOpen,  setCardModalOpen]  = useState(false);
@@ -1607,6 +1609,13 @@ function PlaygroundTab() {
       onClick: (row) => toastWarning(`Deactivated: ${row.full_name}`, "Row Action"),
     },
   ], []);
+
+  const selectedStatusLabels = useMemo(() => {
+    const selectedItems = multiDropdownValues
+      .map((value) => DEMO_STATUS_OPTIONS.find((option) => option.value === value)?.label || value)
+      .filter(Boolean);
+    return selectedItems.length > 0 ? selectedItems.join(", ") : "None";
+  }, [multiDropdownValues]);
 
   const filteredRows = useMemo(() => {
     const f  = tableState.filters || {};
@@ -2131,6 +2140,19 @@ const handleSearch = async (value) => {
             </Dropdown.Menu>
           </Dropdown>
           <p style={{ fontSize: 12, color: "#666", marginTop: 4 }}>Selected: <code>{dropdownValue?.label || "None"}</code></p>
+
+          <p className={styles.playLabel} style={{ marginTop: 12 }}>Multi-select Dropdown</p>
+          <MultiSelectDropdown
+            options={DEMO_STATUS_OPTIONS}
+            selectedValues={multiDropdownValues}
+            onChange={setMultiDropdownValues}
+            placeholder="Select statuses"
+            buttonVariant="secondary"
+            buttonSize="sm"
+          />
+          <p style={{ fontSize: 12, color: "#666", marginTop: 4 }}>
+            Selected: <code>{selectedStatusLabels}</code>
+          </p>
 
           <p className={styles.playLabel} style={{ marginTop: 12 }}>Action Menu with Divider</p>
           <Dropdown>
