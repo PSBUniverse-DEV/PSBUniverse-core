@@ -65,7 +65,16 @@ function MultiSelectDropdown({
       >
         {selectedLabel}
       </BootstrapDropdown.Toggle>
-      <BootstrapDropdown.Menu renderOnMount style={{ minWidth: 240, padding: 8, ...menuStyle }}>
+      <BootstrapDropdown.Menu
+        renderOnMount
+        style={{
+          minWidth: 240,
+          padding: 8,
+          maxHeight: 320,
+          overflowY: "auto",
+          ...menuStyle,
+        }}
+      >
         {options.map((option) => (
           <div key={option.value} style={{ padding: "4px 0" }}>
             <Form.Check
