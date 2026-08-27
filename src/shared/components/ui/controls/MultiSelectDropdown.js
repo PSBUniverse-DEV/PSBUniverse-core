@@ -1,6 +1,7 @@
 "use client";
 
 import { forwardRef, useId, useMemo, useState } from "react";
+import { createPortal } from "react-dom";
 import Form from "react-bootstrap/Form";
 import { Dropdown as BootstrapDropdown } from "react-bootstrap";
 
@@ -19,6 +20,22 @@ const MultiSelectToggle = forwardRef(({ children, onClick, className = "", disab
     {children}
   </button>
 ));
+MultiSelectToggle.displayName = "MultiSelectToggle";
+
+// Renders the dropdown menu into document.body instead of in place, so it
+// can't be visually clipped by an ancestor with overflow:auto/hidden (e.g.
+// FilterPanel's scrollable popover). react-bootstrap still supplies
+// positioning props (style, placement) to this component as normal; only
+// the DOM location changes, not the Popper positioning logic.
+const PortalMenu = forwardRef(({ children, style, className, "aria-labelledby": labeledBy }, ref) => {
+  return createPortal(
+    <div ref={ref} style={style} className={className} aria-labelledby={labeledBy}>
+      {children}
+    </div>,
+    document.body
+  );
+});
+PortalMenu.displayName = "PortalMenu";
 
 function MultiSelectDropdown({
   options = [],
@@ -67,12 +84,15 @@ function MultiSelectDropdown({
         {selectedLabel}
       </BootstrapDropdown.Toggle>
       <BootstrapDropdown.Menu
+        as={PortalMenu}
         renderOnMount
+        popperConfig={{ strategy: "fixed" }}
         style={{
           minWidth: 240,
           padding: 8,
           maxHeight: 320,
           overflowY: "auto",
+          zIndex: 2000,
           ...menuStyle,
         }}
       >
