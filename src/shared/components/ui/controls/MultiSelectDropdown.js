@@ -1,6 +1,6 @@
 "use client";
 
-import { forwardRef, useMemo, useState } from "react";
+import { forwardRef, useId, useMemo, useState } from "react";
 import Form from "react-bootstrap/Form";
 import { Dropdown as BootstrapDropdown } from "react-bootstrap";
 
@@ -31,6 +31,7 @@ function MultiSelectDropdown({
   ...props
 }) {
   const [show, setShow] = useState(false);
+  const instanceId = useId();
 
   const selectedSet = useMemo(() => new Set(selectedValues || []), [selectedValues]);
   const selectedLabels = useMemo(() => {
@@ -79,7 +80,7 @@ function MultiSelectDropdown({
           <div key={option.value} style={{ padding: "4px 0" }}>
             <Form.Check
               type="checkbox"
-              id={`psb-multiselect-${String(option.value)}`}
+              id={`psb-multiselect-${instanceId}-${String(option.value)}`}
               checked={selectedSet.has(option.value)}
               onChange={() => handleToggleValue(option.value)}
               label={option.label}
