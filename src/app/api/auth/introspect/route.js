@@ -1,17 +1,19 @@
 /**
  * Session Introspection Endpoint (cross-subdomain, credentialed)
- * GET/OPTIONS /api/auth/introspect
+ * GET/OPTIONS /api/auth/introspect?module=<module_key>
  *
  * The single source of truth for module apps. The browser sends the
  * .psbuniverse.com `psb_session` cookie here automatically; core verifies it
- * with JWT_SECRET (which never leaves core), then reports identity, roles, and
- * whether the caller's subdomain is authorized. Modules need no JWT_SECRET,
- * no Supabase keys, and no module id of their own.
+ * with JWT_SECRET (which never leaves core), resolves the caller's module_key
+ * to an app_id via psb_s_application, and reports identity, roles, and whether
+ * the caller is authorized for that app. Modules carry no JWT_SECRET, no
+ * Supabase keys, and no numeric app id — only their own module_key slug.
  */
 
 import { verifyToken } from '@/core/auth/jwt.utils';
 import { isSessionInvalidated } from '@/core/auth/session.service';
 import { getPSBSessionCookieFromRequest } from '@/core/auth/cookies.utils';
+import { getSupabaseAdmin } from '@/core/supabase/admin';
 
 export const runtime = 'nodejs';
 export const dynamic = 'force-dynamic';
@@ -24,9 +26,7 @@ function resolveAllowedOrigin(request) {
     const { hostname, protocol } = new URL(origin);
     const isPsb = hostname === 'psbuniverse.com' || hostname.endsWith('.psbuniverse.com');
     const isLocal = hostname === 'localhost' || hostname === '127.0.0.1';
-    if ((isPsb || isLocal) && (protocol === 'https:' || protocol === 'http:')) {
-      return origin;
-    }
+    if ((isPsb || isLocal) && (protocol === 'https:' || protocol === 'http:')) return origin;
   } catch {
     return '';
   }
@@ -44,7 +44,7 @@ function corsHeaders(request) {
     headers['Access-Control-Allow-Origin'] = allowOrigin;
     headers['Access-Control-Allow-Credentials'] = 'true';
     headers['Access-Control-Allow-Methods'] = 'GET, OPTIONS';
-    headers['Access-Control-Allow-Headers'] = 'Content-Type';
+    headers['Access-Control-Allow-Headers'] = 'Content-Type, X-PSB-Module';
   }
   return headers;
 }
@@ -53,31 +53,31 @@ function json(request, body, status) {
   return new Response(JSON.stringify(body), { status, headers: corsHeaders(request) });
 }
 
-// Map the caller's host → app_id using the core-owned MODULE_HOST_MAP env.
-// Returns null when unmapped (then authorization falls back to "authenticated").
-function appIdForRequest(request) {
-  const raw = process.env.MODULE_HOST_MAP || '';
-  if (!raw.trim()) return null;
-
-  let map;
+// Read the caller's module_key from ?module= or the X-PSB-Module header.
+function readModuleKey(request) {
+  let key = '';
   try {
-    map = JSON.parse(raw);
+    key = new URL(request.url).searchParams.get('module') || '';
   } catch {
-    return null;
+    key = '';
   }
+  if (!key) key = request.headers.get('x-psb-module') || '';
+  return String(key || '').trim();
+}
 
-  // Prefer the Origin host (set by the browser on the credentialed CORS call),
-  // fall back to the forwarded host.
-  let host = '';
-  try {
-    host = new URL(request.headers.get('origin') || '').hostname;
-  } catch {
-    host = '';
-  }
-  if (!host) host = (request.headers.get('x-forwarded-host') || request.headers.get('host') || '').split(':')[0];
-
-  const appId = map[host];
-  return appId === undefined || appId === null ? null : String(appId);
+// Resolve a module_key slug to its active app_id via psb_s_application.
+// Returns { appId } when found, { appId: null } when the key is unknown.
+async function resolveAppIdByModuleKey(moduleKey) {
+  if (!moduleKey) return { appId: null };
+  const supabaseAdmin = getSupabaseAdmin();
+  const { data } = await supabaseAdmin
+    .from('psb_s_application')
+    .select('app_id, is_active')
+    .eq('module_key', moduleKey)
+    .maybeSingle();
+  if (!data || !data.app_id) return { appId: null };
+  if (data.is_active === false) return { appId: null };
+  return { appId: String(data.app_id) };
 }
 
 export async function OPTIONS(request) {
@@ -104,17 +104,33 @@ export async function GET(request) {
 
     const modules = Array.isArray(payload.modules) ? payload.modules.map(String) : [];
     const roles = Array.isArray(payload.roles) ? payload.roles.map(String) : [];
-    const appId = appIdForRequest(request);
 
-    // If the host is mapped, authorize by module membership; if unmapped
-    // (e.g. core itself), a valid session is enough.
-    const authorizedForApp = appId === null ? true : modules.includes(appId);
+    const moduleKey = readModuleKey(request);
+    const { appId } = await resolveAppIdByModuleKey(moduleKey);
+
+    // No module_key supplied → core itself (same-origin): a valid session is
+    // enough. Key supplied but unknown → not authorized (moduleKnown:false lets
+    // the shell show a clear "module not registered" message).
+    let authorizedForApp;
+    let moduleKnown;
+    if (!moduleKey) {
+      authorizedForApp = true;
+      moduleKnown = true;
+    } else if (appId === null) {
+      authorizedForApp = false;
+      moduleKnown = false;
+    } else {
+      authorizedForApp = modules.includes(appId);
+      moduleKnown = true;
+    }
 
     return json(
       request,
       {
         authenticated: true,
         authorizedForApp,
+        moduleKnown,
+        moduleKey: moduleKey || null,
         appId,
         userId: payload.userId,
         email: payload.email,
