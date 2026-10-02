@@ -1,5 +1,31 @@
 # Changelog
 
+## 2026-10-02 Session Lifecycle And Safer Repository Sync
+
+### Session Expiry And Renewal
+
+- The global auth provider validates SSO sessions every 30 seconds, when a tab becomes visible, and at the last verified expiry. Confirmed session loss clears local auth state and redirects to login with the current path as the return destination.
+- A global warning modal appears with 10 minutes remaining. It shows a countdown and offers **Extend for 24 hours** or **Not now**. Dismissal does not prevent expiry logout.
+- Renewal uses the existing `POST /api/auth/refresh-token` endpoint. A successful renewal inside the two-hour refresh window resets expiry to 24 hours from renewal and updates both shared cookies.
+- Renewal checks origin, signed session identity, revocation, active user status, and current roles. Database checks are read-only; existing session tracking records and the previous token are not rewritten.
+- Temporary validation outages preserve the last verified session until its known expiry. Non-authentication renewal failures show a retryable error; expired or rejected sessions require login.
+- Tabs revalidate before enforcing an old deadline so a session renewed elsewhere can remain active.
+
+See [SSO Usage](09-sso-architecture/USAGE.md) and [API Reference](09-sso-architecture/API-REFERENCE.md).
+
+### Repository Sync
+
+- Sync explicitly fetches and merges `origin/main`, preserving outgoing commit hashes even when local work was committed before pulling. It never rebases or force-pushes.
+- A configured `core` remote is mirrored into `core-main` and merged; origin-only repositories are also supported.
+- Staged, unstaged, and untracked work is saved and restored. Existing user stashes are preserved, and recovery information is shown when conflicts prevent restoration.
+- Sync retries up to three push attempts only when the remote advances. Unchanged-remote failures stop for network, permissions, or branch-protection checks.
+- Only committed work and conflict-free merge commits are pushed. Uncommitted work is restored locally; it is not automatically committed or published.
+- Eight automated local scenarios cover divergence, conflicts, saved work, fetch/push failures, concurrent remote updates, core sync, and branch preflight without contacting GitHub.
+
+See [Sync Workflow And Test Checklist](sync-repo-test-checklist.md).
+
+---
+
 ## 2026-05-11 New Page Scaffolding Script
 
 Added a `newpage` subcommand to `generate-routes.js` so developers can add a new page to an existing module with one command.

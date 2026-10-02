@@ -92,12 +92,47 @@ if (response.ok) {
 
 ---
 
+## GET /api/auth/introspect
+
+The shared shell's primary session validation endpoint. Core uses a same-origin
+request; modules use the Core Portal URL with `?module=<module_key>`. Requests
+include credentials so core can verify the shared HttpOnly session cookie.
+
+The response includes `authenticated`, `userId`, `email`, `fullName`, `modules`,
+`roles`, `expiresAt` (milliseconds), `authorizedForApp`, `moduleKnown`, and the
+resolved module/app identifiers. Module authorization is core's decision, not a
+value derived from the readable payload cookie.
+
+`401` means the session is missing, expired, or invalidated. A valid session can
+return `200` with `authorizedForApp: false`; lack of module access is not itself
+a session expiry. Responses are `Cache-Control: no-store` and support credentialed
+CORS for the allowed PSB/local development origins.
+
+```javascript
+import { validateSessionToken } from '@/core/sso-client';
+
+const session = await validateSessionToken({ forceRefresh: true });
+```
+
+Normal helper calls share a 30-second client cache and in-flight request. Forced
+refresh bypasses the result cache. The helper returns `null` for a confirmed ended
+session, the last verified result during temporary outages, or `undefined` when
+core is unavailable and nothing has been verified yet. The global provider uses
+this endpoint every 30 seconds, on tab visibility return, and at its known expiry.
+
+---
+
 ## Session Expiry Warning
 
 Extend an existing, unexpired SSO session to 24 hours from the time of renewal.
 The global session modal appears with 10 minutes remaining and calls this endpoint
 when the user chooses **Extend for 24 hours**. **Not now** dismisses the warning
 for the current expiry without preventing automatic logout.
+
+The provider owns this globally; feature modules must not create their own renewal
+timers. Countdown timing uses the verified server `expiresAt`. On confirmed session
+loss it clears local auth state and returns the user to login. A temporary outage
+does not extend a deadline that is already known to have expired.
 
 ### Request
 
@@ -124,7 +159,7 @@ const { expiresAt } = await extendSession();
 }
 ```
 
-When fewer than two hours remain, both `psb_session` (HttpOnly) and `psb_user_payload` are replaced with cookies
+When at most two hours remain, both `psb_session` (HttpOnly) and `psb_user_payload` are replaced with cookies
 having `Max-Age=86400`. User status, identity linkage, revocation, and current roles
 are checked before renewal. Database lookup failures do not issue a new session.
 Earlier refresh requests retain the existing token and return `refreshed: false`.
@@ -132,7 +167,7 @@ Earlier refresh requests retain the existing token and return `refreshed: false`
 | Status | Meaning |
 |--------|---------|
 | `401` | Missing, expired, invalidated session, or inactive/missing user; login is required |
-| `403` | Missing or untrusted origin |
+| `403` | Untrusted origin, or missing origin for a cookie-authenticated browser request |
 | `503` | A required database lookup failed; retry while the session remains valid |
 | `500` | Renewal failed; retry while the session remains valid |
 
@@ -189,7 +224,8 @@ async function logout() {
 
 ## GET /api/auth/validate-token
 
-Validate session token and return payload (primary method for modules).
+Validate session token and return payload (legacy/direct validation). The shared
+shell uses `GET /api/auth/introspect` for session and module authorization checks.
 
 ### Request
 
@@ -320,16 +356,22 @@ if (response.ok) {
 
 ## POST /api/auth/refresh-token
 
-Refresh token if expiring within threshold (2 hours).
+Refresh a valid token with at most two hours remaining to 24 hours from renewal.
+The [global warning flow](#session-expiry-warning) calls this when 10 minutes remain.
 
 ### Request
 
 ```http
 POST /api/auth/refresh-token HTTP/1.1
 Host: psbuniverse.com
+Origin: https://psbuniverse.com
 Cookie: psb_session=<jwt_token>
 Content-Type: application/json
 ```
+
+No body is required for browser renewal. The existing JSON `{ "token": "..." }`
+fallback is supported for server-to-server callers without a session cookie.
+Browser cookie requests require an allowed `Origin`.
 
 ### Response
 
@@ -370,21 +412,18 @@ Set-Cookie: psb_session=<new_jwt_token>; Domain=.psbuniverse.com; Path=/; Max-Ag
 ### Example
 
 ```javascript
+import { extendSession, redirectToLogin } from '@/core/sso-client';
+
 async function refreshTokenIfNeeded() {
-  const response = await fetch('/api/auth/refresh-token', {
-    method: 'POST',
-    credentials: 'include',
-  });
-
-  if (response.ok) {
-    const data = await response.json();
-    console.log('Refreshed:', data.refreshed);
-    // New token is in cookie if refreshed=true
-    return data;
+  try {
+    return await extendSession();
+  } catch (error) {
+    if (error.status === 401) {
+      redirectToLogin(window.location.pathname + window.location.search);
+      return null;
+    }
+    throw error;
   }
-
-  // Token is invalid, redirect to login
-  window.location.assign('/login');
 }
 ```
 

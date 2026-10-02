@@ -4,6 +4,36 @@
 
 Tracked, staged, and untracked work is temporarily stashed and restored. Existing user stashes are left alone. A configured `core` remote is merged as before; origin-only repositories are also supported. Run the script from `main`; it refuses to switch branches or proceed during an unfinished Git operation.
 
+## Everyday Workflow
+
+Run `git status` and review your changes before publishing. If you want your current
+work pushed, stage the intended files and commit them first, then run sync:
+
+```powershell
+git status
+git add path/to/changed-file
+git commit -m "Describe the change"
+.\scripts\sync-repo.ps1
+```
+
+You can also sync before starting work without making a new commit. Any uncommitted
+tracked, staged, or untracked changes are temporarily stashed and then restored;
+they are **not** committed or pushed. The script also retries normal pushes if
+origin advances between its fetch and push.
+
+If you committed before pulling, no history rewrite is needed. Run sync on `main`:
+it fetches the remote commits, creates a merge when needed, and pushes both histories.
+Conflicts still require manual resolution.
+
+### Understanding Restoration Output
+
+`Restoring saved changes...`, a list of modified/untracked files, and
+`Dropped stash@{...}` mean that the script restored saved work and removed its own
+temporary stash after a successful apply. `no changes added to commit` is Git's
+normal status output, not an error. The restored files still need a commit before
+they can be published. Check the final sync message and exit code; a later stash
+conflict or a push failure is reported separately.
+
 ## Automated Local Tests
 
 Run these before testing against a real remote:
@@ -30,11 +60,13 @@ The script never commits uncommitted work. Only existing commits and any conflic
 
 ## Before You Start
 
-- [ ] Make sure all your current work is committed and pushed
+- [ ] Review your work and commit changes you want included in the next push; sync preserves uncommitted changes but does not publish them
 - [ ] Confirm you're on `main`: run `git branch --show-current` — it should say `main`
-- [ ] Confirm your remote is set up: run `git remote -v` — you should see `origin` (your repo) and `core` (the shared platform repo)
+- [ ] Confirm your remote is set up: run `git remote -v` — `origin` is required; app repos should also have `core` (the shared platform repo)
 
-If `core` remote is missing, stop and tell your senior.
+The core platform repo can sync with `origin` only. If an app repo is expected to
+receive shared core updates but its `core` remote is missing, ask your senior to
+configure it; the script skips core sync when that remote is absent.
 
 ---
 
@@ -53,24 +85,28 @@ This gives you a snapshot to restore if anything goes wrong. You can delete it l
 
 ## Step 2: Pull the Updated Script
 
-Your senior has updated core. Pull it:
+Your senior has updated core. For an app repo with a `core` remote and a clean
+worktree, fetch and merge explicitly rather than relying on `git pull` settings:
 
 ```bash
-git checkout core-main
-git pull core main
 git checkout main
-git merge core-main -m "Merge upstream core changes into main"
+git fetch origin main
+git merge --ff --no-edit origin/main
+git fetch core main
+git merge --ff --no-edit core/main -m "Merge upstream core changes into main"
 git push origin main
 ```
+
+For an origin-only repo, omit the two `core` commands. The updated script maintains
+the `core-main` mirror automatically on subsequent runs.
 
 ### Expected Results
 
 | Step | You should see |
 |---|---|
-| `git checkout core-main` | `Switched to branch 'core-main'` |
-| `git pull core main` | Files updated, or `Already up to date.` |
-| `git checkout main` | `Switched to branch 'main'` |
-| `git merge core-main ...` | `Merge made by the 'ort' strategy` with a list of changed files, OR `Already up to date.` |
+| `git checkout main` | On `main` |
+| `git fetch origin main` / `git fetch core main` | Remote refs are refreshed |
+| `git merge --ff --no-edit ...` | Fast-forward, merge commit, or `Already up to date.` |
 | `git push origin main` | Normal push output, NO `--force` needed |
 
 ### If Something Goes Wrong
@@ -93,7 +129,8 @@ cat scripts/sync-repo.ps1 | Select-String "merge"
 
 ### Expected Result
 
-You should see lines mentioning `merge` (not `rebase`). This confirms you got the updated script.
+You should see explicit `merge --ff --no-edit` arguments. Comments and operation
+checks may mention rebase, but the script never executes a rebase.
 
 ---
 
@@ -127,7 +164,7 @@ git log --oneline -10
 
 ### Expected Result
 
-- You should see a new merge commit at the top: `Merge upstream core changes into main`
+- A diverged history produces a merge commit; a fast-forward or no-op does not require a new merge commit
 - Your previous commits should still be there with the **same hashes** as before
 - No duplicated commit messages
 
@@ -135,7 +172,8 @@ git log --oneline -10
 
 ## Step 6: Run the Sync Script (Full Test)
 
-Now test the actual script. Since core hasn't changed since Step 2, this should be a no-op:
+Now test the actual script. If the remotes have not changed since Step 2, no new
+commits should be needed. This is a live sync that can push committed work to origin:
 
 ```powershell
 .\scripts\sync-repo.ps1
