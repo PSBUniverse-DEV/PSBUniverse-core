@@ -1,5 +1,26 @@
 # Changelog
 
+## 2026-10-03 SSO Validation Race Protection
+
+- Second-pass testing reproduced a delayed pre-login rejection that could clear a newly established session. Sign-in now invalidates earlier checks, and superseded checks schedule fresh verification when they finish.
+- Cache invalidation now prevents older introspection responses from overwriting a new verified session or clearing its in-flight request.
+- Expanded service-free regression coverage for delayed responses, cache invalidation, and missing module home routes.
+
+---
+
+## 2026-10-02 SSO-First Module Startup
+
+- Modular deployments initialize from core introspection without requiring a local Supabase login or bootstrap. Their login form stays hidden during validation and redirect.
+- Authenticated login-page visitors return to the module locally. The root resolves a declared module home route without database access; confirmed missing sessions redirect to core login with an absolute module return URL.
+- Local Supabase sign-out revalidates SSO rather than ending a valid shared session. Module-local auth events cannot replace the SSO identity.
+- Core login now requires successful SSO creation and cookie verification. Session checks pause during sign-in to avoid rejecting a session before its cookie is created.
+- Unavailable core introspection shows a retry state, with a 15-second request timeout. Redirect validation rejects protocol-relative external URLs and accepts the core apex domain.
+- Added service-free SSO shell regression tests. Modules must sync and redeploy to receive these changes.
+
+See [SSO Usage](09-sso-architecture/USAGE.md#module-startup-and-login).
+
+---
+
 ## 2026-10-02 Shared File Attachments
 
 - Added `src/core/storage/files.service.js`: server-only helpers for Supabase Storage (`createSignedFileUpload`, `getSignedFileUrl`, `removeStoredFiles`, `assertFileAllowed`). They are not server actions; modules call them from their own server actions.

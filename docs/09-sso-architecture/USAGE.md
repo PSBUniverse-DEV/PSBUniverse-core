@@ -16,6 +16,41 @@ no numeric ids and no auth secrets — they ask core.
    `authorizedForApp`.
 4. The module trusts core's `authorizedForApp` — it verifies nothing itself.
 
+## Module Startup And Login
+
+A modular app is a separate deployment of the shared shell, not a separate required
+sign-in. When `NEXT_PUBLIC_MODULE_KEY` is set to a non-core key, `AuthProvider`
+initializes directly from core introspection instead of local Supabase auth or a
+module-local bootstrap action.
+
+- The local login form is hidden while the module verifies SSO or redirects.
+- An authenticated visitor to the module's login page follows a validated return
+   URL, or goes to the module's local root. That root resolves the first non-login,
+   non-root route declared by the matching `module_key` in the module registry.
+   An unknown key or missing home route produces a 404 rather than a redirect loop.
+- A confirmed missing/expired session sends the visitor to core's login with the
+   full module URL as the return destination, including its query string.
+- If core is unavailable, the module shows a retry state instead of a credentials
+   form. Introspection requests time out after 15 seconds.
+- Local Supabase sign-out triggers SSO revalidation. It does not end a valid shared
+   session, and local Supabase identity events cannot replace a module's SSO user.
+
+Core login reports success only after `/api/auth/login` succeeds and introspection
+verifies the new browser session. Session checks pause during that sign-in
+transition so they cannot reject the user before the shared cookie is created.
+
+Deploy the updated core, then sync **and redeploy** each modular app. Syncing source
+alone does not update an already deployed app. Each app must configure
+`NEXT_PUBLIC_MODULE_KEY` to match both its registry definition and core app record.
+For local module development, set `NEXT_PUBLIC_CORE_PORTAL_URL` to your running
+local core portal; module login is still centralized there.
+
+Run the service-free shell regression suite from the repo root:
+
+```powershell
+node --test scripts/tests/sso-shell.tests.mjs
+```
+
 ## Session Lifecycle
 
 The shared `AuthProvider` owns session checks and the warning modal. Feature modules
@@ -24,9 +59,9 @@ do not need their own expiry timers, logout handlers, or renewal dialogs.
 - Normal introspection calls use a 30-second client cache. The provider bypasses
    that cache every 30 seconds, when the tab becomes visible, and at the last verified
    expiry. Background browser throttling can delay checks until the tab resumes.
-- A confirmed expired, missing, or invalidated session, or a Supabase sign-out,
+- A confirmed expired, missing, or invalidated shared session
    clears local user/role state and redirects to login with the current path and
-   query as the return destination.
+   query as the return destination. Supabase sign-out alone causes revalidation.
 - Temporary network/server failures keep the last verified result rather than
    immediately logging the user out. They do not extend a known expired session.
 

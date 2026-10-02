@@ -6,6 +6,7 @@ import { getSupabase, initSupabase } from "@/core/supabase/client";
 import { bootstrapAuthState } from "@/core/auth/bootstrap.actions";
 import SessionExpiryModal from "@/core/auth/SessionExpiryModal";
 import {
+  IS_MODULE,
   validateSessionToken,
   extendSession,
   buildUserFromSSOSession,
@@ -81,11 +82,15 @@ export default function AuthProvider({ children }) {
   const [dbUser, setDbUser] = useState(null);
   const [roles, setRoles] = useState([]);
   const [loading, setLoading] = useState(true);
+  const [authError, setAuthError] = useState("");
   const [sessionWarningExpiresAt, setSessionWarningExpiresAt] = useState(null);
   const [renewalBusy, setRenewalBusy] = useState(false);
   const [renewalError, setRenewalError] = useState("");
   const dismissedSessionExpiryRef = useRef(null);
   const renewSessionRef = useRef(null);
+  const sessionEstablishmentPendingRef = useRef(false);
+  const checkSessionRef = useRef(null);
+  const sessionRevisionRef = useRef(0);
   const hasInitializedRef = useRef(false);
   const lastAuthUserIdRef = useRef(null);
   const lastBootstrapTsRef = useRef(0);
@@ -150,7 +155,6 @@ export default function AuthProvider({ children }) {
     let sessionWarningTimer = null;
     let verifiedSessionExpiresAt = null;
     let renewingSession = false;
-    let sessionRevision = 0;
 
     /**
      * Build a stable fingerprint that uniquely identifies the current session.
@@ -176,6 +180,7 @@ export default function AuthProvider({ children }) {
       setAuthUser(null);
       setDbUser(null);
       setRoles([]);
+      setAuthError("");
       setSessionWarningExpiresAt(null);
       setRenewalError("");
       dismissedSessionExpiryRef.current = null;
@@ -222,15 +227,35 @@ export default function AuthProvider({ children }) {
       }
     }
 
+    function hydrateSSOState(session) {
+      if (!active || sessionEnded) return;
+      const ssoUser = buildUserFromSSOSession(session);
+      const ssoDbUser = buildDbUserFromSSOSession(session);
+      const ssoRoles = buildRolesFromSSOSession(session);
+      if (
+        lastAuthUserIdRef.current !== ssoUser.id ||
+        JSON.stringify(lastHydratedUserRef.current) !== JSON.stringify(ssoDbUser) ||
+        JSON.stringify(lastHydratedRolesRef.current) !== JSON.stringify(ssoRoles)
+      ) {
+        setAuthUser(ssoUser);
+        setDbUser(ssoDbUser);
+        setRoles(ssoRoles);
+      }
+      lastAuthUserIdRef.current = ssoUser.id;
+      lastHydratedUserRef.current = ssoDbUser;
+      lastHydratedRolesRef.current = ssoRoles;
+      setLoading(false);
+    }
+
     async function checkSession() {
-      if (!active || sessionEnded || renewingSession || !hasInitializedRef.current ||
+      if (!active || sessionEnded || renewingSession || sessionEstablishmentPendingRef.current || !hasInitializedRef.current ||
           !lastAuthUserIdRef.current) return;
       if (checkingSession) return;
       checkingSession = true;
-      const revision = sessionRevision;
+      const revision = sessionRevisionRef.current;
       try {
         const session = await validateSessionToken({ forceRefresh: true });
-        if (!active || sessionEnded || revision !== sessionRevision) return;
+        if (!active || sessionEnded || sessionEstablishmentPendingRef.current || revision !== sessionRevisionRef.current) return;
         if (session === undefined) {
           if (verifiedSessionExpiresAt !== null && verifiedSessionExpiresAt <= Date.now()) endSession();
           return;
@@ -239,16 +264,20 @@ export default function AuthProvider({ children }) {
           endSession();
           return;
         }
+        if (IS_MODULE) hydrateSSOState(session);
         updateSessionExpiry(session.expiresAt);
       } finally {
         checkingSession = false;
+        if (active && !sessionEnded && !sessionEstablishmentPendingRef.current && revision !== sessionRevisionRef.current) {
+          window.setTimeout(checkSession, 0);
+        }
       }
     }
 
     async function renewCurrentSession() {
       if (!active || sessionEnded || renewingSession) return;
       renewingSession = true;
-      sessionRevision += 1;
+      sessionRevisionRef.current += 1;
       setRenewalBusy(true);
       setRenewalError("");
       try {
@@ -271,6 +300,7 @@ export default function AuthProvider({ children }) {
     }
 
     renewSessionRef.current = renewCurrentSession;
+    checkSessionRef.current = checkSession;
 
     async function hydrateAuthState(user, options = {}) {
       const background = Boolean(options.background);
@@ -378,6 +408,22 @@ export default function AuthProvider({ children }) {
       setLoading(true);
 
       try {
+        if (IS_MODULE) {
+          const ssoSession = await validateSessionToken({ forceRefresh: true });
+          if (!active || sessionEnded) return;
+          if (ssoSession === undefined) {
+            setAuthError("Unable to verify your session with core. Please try again.");
+            setLoading(false);
+          } else if (ssoSession?.userId &&
+              (!Number.isFinite(ssoSession.expiresAt) || ssoSession.expiresAt > Date.now())) {
+            hydrateSSOState(ssoSession);
+            updateSessionExpiry(ssoSession.expiresAt);
+          } else {
+            await resetAuthState();
+          }
+          return;
+        }
+
         const { data: sessionData } = await supabase.auth.getSession();
         if (sessionData?.session?.access_token) {
           setAccessTokenCookie(sessionData.session);
@@ -415,18 +461,7 @@ export default function AuthProvider({ children }) {
           try {
             const ssoSession = await validateSessionToken();
             if (ssoSession?.userId) {
-              const ssoUser = buildUserFromSSOSession(ssoSession);
-              const ssoDbUser = buildDbUserFromSSOSession(ssoSession);
-              const ssoRoles = buildRolesFromSSOSession(ssoSession);
-
-              setAuthUser(ssoUser);
-              setDbUser(ssoDbUser);
-              setRoles(ssoRoles);
-              lastAuthUserIdRef.current = ssoUser.id;
-              // Seed snapshot refs for the same reason as above.
-              lastHydratedUserRef.current = ssoDbUser;
-              lastHydratedRolesRef.current = ssoRoles;
-              setLoading(false);
+              hydrateSSOState(ssoSession);
               return;
             }
           } catch {
@@ -440,7 +475,7 @@ export default function AuthProvider({ children }) {
         await hydrateAuthState(data?.user ?? null);
       } finally {
         hasInitializedRef.current = true;
-        checkSession();
+        if (!IS_MODULE) checkSession();
       }
     }
 
@@ -450,9 +485,11 @@ export default function AuthProvider({ children }) {
       console.debug('[Auth] onAuthStateChange', event, { init: hasInitializedRef.current, userId: lastAuthUserIdRef.current });  // remove when bug confirmed fixed
       if (!active || sessionEnded) return;
       if (event === "SIGNED_OUT" && lastAuthUserIdRef.current) {
-        endSession();
+        clearAccessTokenCookie();
+        window.setTimeout(checkSession, 0);
         return;
       }
+      if (IS_MODULE) return;
       if (session?.access_token) {
         setAccessTokenCookie(session);
       } else if (event === "SIGNED_OUT") {
@@ -527,6 +564,7 @@ export default function AuthProvider({ children }) {
 
       if (document.visibilityState !== "visible") return;
       checkSession();
+      if (IS_MODULE) return;
       if (!hasInitializedRef.current || !lastAuthUserIdRef.current) return;
       if (hiddenAt == null) return;
       const hiddenDuration = Date.now() - hiddenAt;
@@ -580,6 +618,7 @@ export default function AuthProvider({ children }) {
       if (sessionExpiryTimer !== null) window.clearTimeout(sessionExpiryTimer);
       if (sessionWarningTimer !== null) window.clearTimeout(sessionWarningTimer);
       renewSessionRef.current = null;
+      checkSessionRef.current = null;
       data.subscription.unsubscribe();
       document.removeEventListener("visibilitychange", handleVisibilityChange);
     };
@@ -591,8 +630,17 @@ export default function AuthProvider({ children }) {
       dbUser,
       roles,
       loading,
+      authError,
+      beginSessionEstablishment: () => {
+        sessionRevisionRef.current += 1;
+        sessionEstablishmentPendingRef.current = true;
+      },
+      finishSessionEstablishment: async () => {
+        sessionEstablishmentPendingRef.current = false;
+        await checkSessionRef.current?.();
+      },
     }),
-    [authUser, dbUser, roles, loading],
+    [authUser, dbUser, roles, loading, authError],
   );
 
   return (
