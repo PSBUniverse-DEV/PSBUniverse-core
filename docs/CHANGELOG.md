@@ -1,5 +1,15 @@
 # Changelog
 
+## 2026-10-02 Shared File Attachments
+
+- Added `src/core/storage/files.service.js`: server-only helpers for Supabase Storage (`createSignedFileUpload`, `getSignedFileUrl`, `removeStoredFiles`, `assertFileAllowed`). They are not server actions; modules call them from their own server actions.
+- Added the shared `FileAttachments` component (`@/shared/components/ui`): list, add, open and delete files on any record. The browser uploads straight to Storage through a one-time signed upload target.
+- Modules keep their own file table and choose the bucket and folder. Core adds no database objects and no new packages.
+
+See [Shared Components — File Attachments](04-ui-system/shared-components.md#file-attachments).
+
+---
+
 ## 2026-10-02 Session Lifecycle And Safer Repository Sync
 
 ### Session Expiry And Renewal
