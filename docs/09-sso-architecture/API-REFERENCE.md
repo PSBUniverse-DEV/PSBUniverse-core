@@ -92,6 +92,57 @@ if (response.ok) {
 
 ---
 
+## Session Expiry Warning
+
+Extend an existing, unexpired SSO session to 24 hours from the time of renewal.
+The global session modal appears with 10 minutes remaining and calls this endpoint
+when the user chooses **Extend for 24 hours**. **Not now** dismisses the warning
+for the current expiry without preventing automatic logout.
+
+### Request
+
+Send a credentialed POST to `/api/auth/refresh-token`
+(at the Core Portal URL for module deployments). No request body is required. The
+browser supplies the `Origin` header and the HttpOnly `psb_session` cookie.
+
+```javascript
+import { extendSession } from '@/core/sso-client';
+
+const { expiresAt } = await extendSession();
+```
+
+### Response
+
+**Success (200 OK)**:
+
+```json
+{
+  "success": true,
+  "refreshed": true,
+  "token": "<renewed-jwt>",
+  "expiresAt": 1791072000000
+}
+```
+
+When fewer than two hours remain, both `psb_session` (HttpOnly) and `psb_user_payload` are replaced with cookies
+having `Max-Age=86400`. User status, identity linkage, revocation, and current roles
+are checked before renewal. Database lookup failures do not issue a new session.
+Earlier refresh requests retain the existing token and return `refreshed: false`.
+
+| Status | Meaning |
+|--------|---------|
+| `401` | Missing, expired, invalidated session, or inactive/missing user; login is required |
+| `403` | Missing or untrusted origin |
+| `503` | A required database lookup failed; retry while the session remains valid |
+| `500` | Renewal failed; retry while the session remains valid |
+
+Renewal only reads database records. It replaces the browser cookies without
+updating `psb_sessions` tracking records or invalidating the previous token. The
+previous token retains its original expiry. Other open tabs pick up the new expiry
+on their next session check, including a check before enforcing the old deadline.
+
+---
+
 ## POST /api/auth/logout
 
 Invalidate session and clear cookies.

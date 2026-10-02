@@ -30,6 +30,7 @@ const INTROSPECT_URL =
   (IS_MODULE ? INTROSPECT_CORE_URL : "") +
   "/api/auth/introspect" +
   (MODULE_KEY ? `?module=${encodeURIComponent(MODULE_KEY)}` : "");
+const RENEW_SESSION_URL = (IS_MODULE ? INTROSPECT_CORE_URL : "") + "/api/auth/refresh-token";
 
 // ── Local Cookie Helpers ────────────────────────────────────────────────────
 
@@ -169,6 +170,28 @@ export async function validateSessionToken({ forceRefresh = false } = {}) {
 export function clearIntrospectCache() {
   introspectCache = { at: 0, data: null };
   introspectInFlight = null;
+}
+
+export async function extendSession() {
+  if (introspectInFlight) await introspectInFlight;
+  const response = await fetch(RENEW_SESSION_URL, {
+    method: "POST",
+    credentials: "include",
+    headers: { Accept: "application/json" },
+    cache: "no-store",
+    signal: AbortSignal.timeout(15_000),
+  });
+  const payload = await response.json();
+  if (!response.ok) {
+    const error = new Error(payload?.error || "Unable to extend session. Please try again.");
+    error.status = response.status;
+    throw error;
+  }
+  if (!payload?.success || !Number.isFinite(payload.expiresAt) || payload.expiresAt <= Date.now()) {
+    throw new Error("Unable to confirm the new session expiry. Please try again.");
+  }
+  clearIntrospectCache();
+  return payload;
 }
 
 /**
