@@ -124,8 +124,12 @@ async function fetchIntrospect() {
     const res = await fetch(INTROSPECT_URL, {
       credentials: "include",
       headers: { Accept: "application/json" },
+      cache: "no-store",
     });
     if (!res.ok) {
+      if (res.status !== 401) {
+        return introspectCache.data ?? undefined;
+      }
       introspectCache = { at: Date.now(), data: null };
       return null;
     }
@@ -136,20 +140,22 @@ async function fetchIntrospect() {
   } catch {
     // Core unreachable / transient network error: keep the last known result
     // rather than hard-logging-out mid-session.
-    return introspectCache.data;
+    return introspectCache.data ?? undefined;
   } finally {
     introspectInFlight = null;
   }
 }
 
 /**
- * Return the current VERIFIED session payload from core, or null.
+ * Return the current VERIFIED session payload from core, or null for an ended session.
+ * Returns undefined when core is unavailable and no verified result is cached.
  * Shape: { userId, email, fullName, modules, roles, authorizedForApp, moduleKnown, appId }
- * @returns {Promise<Object|null>}
+ * @param {{forceRefresh?: boolean}} [options] Bypass the short-lived result cache.
+ * @returns {Promise<Object|null|undefined>}
  */
-export async function validateSessionToken() {
+export async function validateSessionToken({ forceRefresh = false } = {}) {
   const now = Date.now();
-  if (introspectCache.data && now - introspectCache.at < INTROSPECT_TTL_MS) {
+  if (!forceRefresh && introspectCache.data && now - introspectCache.at < INTROSPECT_TTL_MS) {
     return introspectCache.data;
   }
   if (introspectInFlight) return introspectInFlight;

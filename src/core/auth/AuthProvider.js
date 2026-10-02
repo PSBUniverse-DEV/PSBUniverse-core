@@ -9,6 +9,9 @@ import {
   buildUserFromSSOSession,
   buildDbUserFromSSOSession,
   buildRolesFromSSOSession,
+  clearIntrospectCache,
+  clearPSBUserPayloadCookie,
+  redirectToLogin,
 } from "@/core/sso-client";
 
 initSupabase(process.env.NEXT_PUBLIC_SUPABASE_URL, process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY);
@@ -134,6 +137,10 @@ export default function AuthProvider({ children }) {
   useEffect(() => {
     const supabase = getSupabase();
     let active = true;
+    let sessionEnded = false;
+    let checkingSession = false;
+    let sessionExpiryTimer = null;
+    let verifiedSessionExpiresAt = null;
 
     /**
      * Build a stable fingerprint that uniquely identifies the current session.
@@ -166,11 +173,54 @@ export default function AuthProvider({ children }) {
       setLoading(false);
     }
 
+    function endSession() {
+      if (!active || sessionEnded || !lastAuthUserIdRef.current) return;
+      sessionEnded = true;
+      clearAccessTokenCookie();
+      clearPSBUserPayloadCookie();
+      clearIntrospectCache();
+      resetAuthState();
+      window.setTimeout(async () => {
+        await supabase.auth.signOut({ scope: "local" }).catch(() => {});
+        redirectToLogin(window.location.pathname + window.location.search);
+      }, 0);
+    }
+
+    async function checkSession() {
+        if (!active || sessionEnded || !hasInitializedRef.current ||
+          !lastAuthUserIdRef.current) return;
+      if (verifiedSessionExpiresAt !== null && verifiedSessionExpiresAt <= Date.now()) {
+        endSession();
+        return;
+      }
+      if (checkingSession) return;
+      checkingSession = true;
+      try {
+        const session = await validateSessionToken({ forceRefresh: true });
+        if (!active || sessionEnded) return;
+        if (session === undefined) return;
+        if (!session?.userId) {
+          endSession();
+          return;
+        }
+        if (sessionExpiryTimer !== null) window.clearTimeout(sessionExpiryTimer);
+        verifiedSessionExpiresAt = Number.isFinite(session.expiresAt) ? session.expiresAt : null;
+        if (verifiedSessionExpiresAt !== null) {
+          sessionExpiryTimer = window.setTimeout(
+            checkSession,
+            Math.max(0, Math.min(verifiedSessionExpiresAt - Date.now(), 2_147_483_647)),
+          );
+        }
+      } finally {
+        checkingSession = false;
+      }
+    }
+
     async function hydrateAuthState(user, options = {}) {
       const background = Boolean(options.background);
       const syncBootstrap = options.syncBootstrap !== false;
 
-      if (!active) {
+      if (!active || sessionEnded) {
         return;
       }
 
@@ -229,7 +279,7 @@ export default function AuthProvider({ children }) {
         resolvedRoles = [];
       }
 
-      if (!active) {
+      if (!active || sessionEnded) {
         return;
       }
 
@@ -334,6 +384,7 @@ export default function AuthProvider({ children }) {
         await hydrateAuthState(data?.user ?? null);
       } finally {
         hasInitializedRef.current = true;
+        checkSession();
       }
     }
 
@@ -341,6 +392,11 @@ export default function AuthProvider({ children }) {
 
     const { data } = supabase.auth.onAuthStateChange((event, session) => {
       console.debug('[Auth] onAuthStateChange', event, { init: hasInitializedRef.current, userId: lastAuthUserIdRef.current });  // remove when bug confirmed fixed
+      if (!active || sessionEnded) return;
+      if (event === "SIGNED_OUT" && lastAuthUserIdRef.current) {
+        endSession();
+        return;
+      }
       if (session?.access_token) {
         setAccessTokenCookie(session);
       } else if (event === "SIGNED_OUT") {
@@ -397,7 +453,7 @@ export default function AuthProvider({ children }) {
       hydrateAuthState(sessionUser, {
         background: true,
         syncBootstrap: event !== "TOKEN_REFRESHED",
-      });
+      }).then(checkSession);
     });
 
     // ── Visibility Change Handler ───────────────────────────────────
@@ -414,6 +470,7 @@ export default function AuthProvider({ children }) {
       }
 
       if (document.visibilityState !== "visible") return;
+      checkSession();
       if (!hasInitializedRef.current || !lastAuthUserIdRef.current) return;
       if (hiddenAt == null) return;
       const hiddenDuration = Date.now() - hiddenAt;
@@ -459,9 +516,12 @@ export default function AuthProvider({ children }) {
     }
 
     document.addEventListener("visibilitychange", handleVisibilityChange);
+    const sessionCheckInterval = window.setInterval(checkSession, 30_000);
 
     return () => {
       active = false;
+      window.clearInterval(sessionCheckInterval);
+      if (sessionExpiryTimer !== null) window.clearTimeout(sessionExpiryTimer);
       data.subscription.unsubscribe();
       document.removeEventListener("visibilitychange", handleVisibilityChange);
     };
