@@ -1,7 +1,9 @@
 "use client";
 
 import { useState } from "react";
+import Image from "next/image";
 import { Button, Form } from "react-bootstrap";
+import dealerIcon from "@/styles/psb_dealer_icon.svg";
 
 export default function DealerLoginView() {
   const [username, setUsername] = useState("");
@@ -43,6 +45,7 @@ export default function DealerLoginView() {
       <div className="portal-login-split">
         <aside className="portal-login-brand" aria-hidden="true">
           <div className="portal-login-brand-inner">
+            <Image src={dealerIcon} alt="" className="portal-login-logo portal-login-logo--mark" priority />
             <h1 className="psb-title mb-3">PSBUniverse</h1>
             <p className="psb-label mb-2">Dealer Portal</p>
             <p className="portal-brand-copy mb-0">Sign in to view and manage your dealer account.</p>
