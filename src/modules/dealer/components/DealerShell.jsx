@@ -16,13 +16,6 @@ const ACCOUNT_NAV = [
 // Planned sections. Shown so dealers know they are coming; not selectable yet.
 const LATER_NAV = ["Orders", "Quotes", "Invoices", "Documents"];
 
-function initialsOf(value) {
-  const text = String(value ?? "").trim();
-  if (!text) return "DA";
-  const parts = text.split(/\s+/).filter(Boolean).slice(0, 2);
-  return parts.map((part) => part[0]?.toUpperCase() || "").join("") || "DA";
-}
-
 /**
  * Frame for the signed-in dealer area: one full-height sidebar (brand, dealer
  * identity, navigation, sign-out) beside the selected section. There is no top
@@ -56,7 +49,6 @@ export default function DealerShell({ dealer, username, active, onSelect, childr
         </div>
 
         <div className="dp-sidebar-dealer">
-          <div className="dp-avatar" aria-hidden="true">{initialsOf(dealer?.dealer_name)}</div>
           <div className="dp-sidebar-dealer-text">
             <div className="dp-who-name">{dealer?.dealer_name || "Dealer account"}</div>
             <div className="dp-who-meta">Dealer <span className="dp-chip">{dealer?.dealer_code || "--"}</span></div>

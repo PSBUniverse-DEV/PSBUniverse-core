@@ -673,9 +673,18 @@ button.dp-tab:focus-visible {
 }
 
 .dp-brand .dp-logo {
-  width: 36px;
-  height: 36px;
+  width: 56px;
+  height: 56px;
   margin-right: 0;
+}
+
+.dp-brand .dp-title {
+  font-size: 19px;
+}
+
+.dp-brand .dp-subtitle {
+  font-size: 13px;
+  margin-top: 2px;
 }
 
 .dp-sidebar-dealer {
