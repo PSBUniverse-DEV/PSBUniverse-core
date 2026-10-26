@@ -493,7 +493,9 @@ export async function loadUserMasterDetail(userId) {
   return { user, accessRows };
 }
 
-export async function createUserAction(payload) {
+// `skipResultRow`: the batch save only needs the new id, so it skips the
+// lookup/auth loads that build the full row for the screen.
+export async function createUserAction(payload, { skipResultRow = false } = {}) {
   const supabase = getSupabaseAdmin();
   const createPayload = buildWritablePayload(payload, { includeDefaultActive: true });
   const pw = normalizePassword(payload?.password);
@@ -530,13 +532,16 @@ export async function createUserAction(payload) {
     await syncAuthUserFromPayload(supabase, authRes.authUserId, { ...createPayload, password: pw }, { syncPassword: true });
   }
 
+  if (skipResultRow) return { user_id: created.user_id };
+
   const lookupData = await loadLookupData(supabase);
   let enriched = await enrichSingleRowWithAuthUser(supabase, created);
   enriched = mergeRowsWithLookupLabels([enriched], lookupData)[0] || enriched;
   return mapUserMasterRows([enriched])[0] || null;
 }
 
-export async function updateUserAction(userId, updates) {
+// `skipResultRow`: see createUserAction.
+export async function updateUserAction(userId, updates, { skipResultRow = false } = {}) {
   const supabase = getSupabaseAdmin();
   const { data: existing, error: fetchErr } = await supabase.from("psb_s_user").select("*").eq("user_id", userId).single();
   if (fetchErr) throw new Error(fetchErr.message || "Failed to fetch user.");
@@ -576,6 +581,8 @@ export async function updateUserAction(userId, updates) {
     if (pw) syncPayload.password = pw;
     await syncAuthUserFromPayload(supabase, resolvedAuthId, syncPayload, { syncPassword: Boolean(pw) });
   }
+
+  if (skipResultRow) return { user_id: updated.user_id };
 
   const lookupData = await loadLookupData(supabase);
   let enriched = await enrichSingleRowWithAuthUser(supabase, { ...updated, full_name: computeFullName(updated) });
@@ -626,4 +633,87 @@ export async function deleteAccessAction(userId, payload) {
   if (error) throw new Error(error.message || "Failed to deactivate access row.");
   if (ensureArray(data).length === 0) throw new Error("Access mapping not found.");
   return { deactivated: true };
+}
+
+// ─── Batch save ────────────────────────────────────────────
+
+// Adds (or re-activates) access rows in one upsert, after checking in one
+// query that every role belongs to its application. Same rules as
+// createAccessAction. Duplicate rows are dropped (an upsert may not touch
+// the same key twice).
+async function upsertAccessRows(supabase, rows) {
+  const byKey = new Map();
+  ensureArray(rows).forEach((row) => {
+    const userId = normalizeOptionalText(row?.user_id), appId = normalizeOptionalText(row?.app_id), roleId = normalizeOptionalText(row?.role_id);
+    if (!userId || !appId || !roleId) throw new Error("Application and role are required.");
+    byKey.set(`${userId}|${appId}|${roleId}`, { user_id: userId, app_id: appId, role_id: roleId, is_active: true });
+  });
+  const uniqueRows = Array.from(byKey.values());
+  if (uniqueRows.length === 0) return;
+
+  const roleIds = Array.from(new Set(uniqueRows.map((row) => row.role_id)));
+  const { data: roles, error: roleError } = await supabase.from("psb_s_role").select("role_id, app_id").in("role_id", roleIds);
+  if (roleError) throw new Error(roleError.message || "Failed to validate roles.");
+  const appIdByRoleId = new Map(ensureArray(roles).map((role) => [String(role.role_id), String(role.app_id)]));
+  uniqueRows.forEach((row) => {
+    if (appIdByRoleId.get(String(row.role_id)) !== String(row.app_id)) {
+      throw new Error("Selected role does not belong to the selected application.");
+    }
+  });
+
+  const { error } = await supabase.from("psb_m_userapproleaccess").upsert(uniqueRows, { onConflict: "user_id,app_id,role_id" });
+  if (error) throw new Error(error.message || "Failed to create access row.");
+}
+
+/**
+ * Saves a whole staged batch in ONE call from the browser (it used to be one
+ * call per user and per access row). Same order as before: new users and their
+ * access → user updates → access removals → access additions. New users and
+ * updates go one at a time (each needs a unique username / employee id);
+ * access changes go together. Returns { [tempId]: newUserId }.
+ */
+export async function saveUserMasterBatch(pendingBatch) {
+  const supabase = getSupabaseAdmin();
+  const createdIds = {};
+  // Staged rows may point at a user created earlier in this batch ("tmp-…" id).
+  const resolveUserId = (rawId) => {
+    const id = createdIds[String(rawId)] || rawId;
+    return id && !normalizeText(id).startsWith("tmp-") ? id : null;
+  };
+
+  const newUserAccess = [];
+  for (const entry of ensureArray(pendingBatch?.creates)) {
+    const created = await createUserAction(entry?.payload || {}, { skipResultRow: true });
+    if (!created?.user_id) throw new Error("Created user did not return a valid id.");
+    createdIds[String(entry?.tempId)] = String(created.user_id);
+    ensureArray(entry?.accessRows).forEach((access) => {
+      newUserAccess.push({ user_id: created.user_id, app_id: access?.app_id, role_id: access?.role_id });
+    });
+  }
+  await upsertAccessRows(supabase, newUserAccess);
+
+  for (const [rawId, payload] of Object.entries(pendingBatch?.updates || {})) {
+    const userId = resolveUserId(rawId);
+    if (userId) await updateUserAction(userId, payload || {}, { skipResultRow: true });
+  }
+
+  const removals = [];
+  for (const [rawId, rows] of Object.entries(pendingBatch?.accessDeletes || {})) {
+    const userId = resolveUserId(rawId);
+    if (!userId) continue;
+    ensureArray(rows).forEach((row) => {
+      removals.push(deleteAccessAction(userId, { app_id: row?.app_id, role_id: row?.role_id }));
+    });
+  }
+  await Promise.all(removals);
+
+  const additions = [];
+  for (const [rawId, rows] of Object.entries(pendingBatch?.accessUpserts || {})) {
+    const userId = resolveUserId(rawId);
+    if (!userId) continue;
+    ensureArray(rows).forEach((row) => additions.push({ user_id: userId, app_id: row?.app_id, role_id: row?.role_id }));
+  }
+  await upsertAccessRows(supabase, additions);
+
+  return createdIds;
 }
