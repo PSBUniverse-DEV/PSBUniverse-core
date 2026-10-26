@@ -334,22 +334,22 @@ async function enrichSingleRowWithAuthUser(supabase, row) {
   return nextRow;
 }
 
-async function enrichRowsWithAuthUsers(supabase, rows) {
+// `authUsers` is the list from listAuthUsers, loaded by the caller alongside
+// the other queries (an empty list leaves the rows as they are).
+async function enrichRowsWithAuthUsers(supabase, rows, authUsers) {
   const safe = ensureArray(rows);
   if (safe.length === 0) return [];
-  let authUsers = [];
-  try { authUsers = await listAuthUsers(supabase); } catch { return safe; }
   const authById = new Map(), authByEmail = new Map();
-  authUsers.forEach((u) => {
+  ensureArray(authUsers).forEach((u) => {
     const id = normalizeText(u?.id), em = normalizeEmail(u?.email);
     if (id) authById.set(id, u);
     if (em) authByEmail.set(em, u);
   });
-  const result = [];
-  for (const row of safe) {
+  // Rows missing their auth link are linked all at once, not one after another.
+  return Promise.all(safe.map(async (row) => {
     const authId = normalizeText(row?.auth_user_id), email = normalizeEmail(row?.email);
     const authUser = authById.get(authId) || authByEmail.get(email) || null;
-    if (!authUser) { result.push(row); continue; }
+    if (!authUser) return row;
     let nextRow = mergeRowWithAuthUser(row, authUser);
     if (!authId && hasValue(row?.user_id)) {
       try {
@@ -357,9 +357,8 @@ async function enrichRowsWithAuthUsers(supabase, rows) {
         if (!error && synced) nextRow = mergeRowWithAuthUser({ ...synced, full_name: computeFullName(synced) }, authUser);
       } catch { nextRow = { ...nextRow, auth_user_id: authUser.id }; }
     }
-    result.push(nextRow);
-  }
-  return result;
+    return nextRow;
+  }));
 }
 
 function buildAuthMetadata(payload) {
@@ -439,19 +438,25 @@ function buildWritablePayload(source, { includeDefaultActive } = {}) {
 
 // ─── Exported Server Actions ──────────────────────────────
 
-export async function loadUserMasterSetupData() {
-  const supabase = getSupabaseAdmin();
-  const lookupData = await loadLookupData(supabase);
-  let rows = [];
-  try {
-    const { data, error } = await supabase.from("psb_s_user").select("*").order("user_id", { ascending: true }).limit(200);
-    if (error) throw new Error(error.message);
-    rows = ensureArray(data).map((r) => ({ ...r, full_name: computeFullName(r) }));
-  } catch { rows = []; }
-  rows = await enrichRowsWithAuthUsers(supabase, rows);
+// Lookup lists, user rows and auth accounts don't depend on each other, so
+// they load together: one wait instead of three. A failed user or auth query
+// gives no rows / no auth details, as before; a failed lookup still throws.
+async function loadUsersWithLookups(supabase) {
+  const [lookupData, usersResult, authUsers] = await Promise.all([
+    loadLookupData(supabase),
+    supabase.from("psb_s_user").select("*").order("user_id", { ascending: true }).limit(200),
+    listAuthUsers(supabase).catch(() => []),
+  ]);
+  let rows = usersResult.error ? [] : ensureArray(usersResult.data).map((r) => ({ ...r, full_name: computeFullName(r) }));
+  rows = await enrichRowsWithAuthUsers(supabase, rows, authUsers);
   rows = mergeRowsWithLookupLabels(rows, lookupData);
-  const users = mapUserMasterRows(rows);
-  return { users, totalUsers: users.length };
+  return { lookupData, users: mapUserMasterRows(rows) };
+}
+
+export async function loadUserMasterSetupData() {
+  const { lookupData, users } = await loadUsersWithLookups(getSupabaseAdmin());
+  // Lookups go to the screen with the page, so it doesn't load them a second time.
+  return { users, totalUsers: users.length, lookups: lookupData };
 }
 
 export async function loadUserMasterLookups() {
@@ -460,34 +465,28 @@ export async function loadUserMasterLookups() {
 }
 
 export async function loadUserMasterUsers() {
-  const supabase = getSupabaseAdmin();
-  const lookupData = await loadLookupData(supabase);
-  let rows = [];
-  try {
-    const { data, error } = await supabase.from("psb_s_user").select("*").order("user_id", { ascending: true }).limit(200);
-    if (error) throw new Error(error.message);
-    rows = ensureArray(data).map((r) => ({ ...r, full_name: computeFullName(r) }));
-  } catch { rows = []; }
-  rows = await enrichRowsWithAuthUsers(supabase, rows);
-  rows = mergeRowsWithLookupLabels(rows, lookupData);
-  return mapUserMasterRows(rows);
+  const { users } = await loadUsersWithLookups(getSupabaseAdmin());
+  return users;
 }
 
 export async function loadUserMasterDetail(userId) {
   const supabase = getSupabaseAdmin();
-  const { data: record, error } = await supabase.from("psb_s_user").select("*").eq("user_id", userId).single();
+  // The user row, lookup lists and access rows (active and inactive) load
+  // together; only the auth account lookup needs the user row first.
+  const [{ data: record, error }, lookupData, { data: accessData, error: accessErr }] = await Promise.all([
+    supabase.from("psb_s_user").select("*").eq("user_id", userId).single(),
+    loadLookupData(supabase),
+    supabase
+      .from("psb_m_userapproleaccess").select("*")
+      .eq("user_id", userId)
+      .order("app_id", { ascending: true }).order("role_id", { ascending: true }),
+  ]);
   if (error) throw new Error(error.message || "Failed to fetch user.");
   const row = { ...record, full_name: computeFullName(record) };
-  const lookupData = await loadLookupData(supabase);
   let enriched = await enrichSingleRowWithAuthUser(supabase, row);
   enriched = mergeRowWithLookupLabels(enriched, createLookupMaps(lookupData));
   const user = mapUserMasterDetail(enriched);
 
-  // Also load access rows (both active and inactive)
-  const { data: accessData, error: accessErr } = await supabase
-    .from("psb_m_userapproleaccess").select("*")
-    .eq("user_id", userId)
-    .order("app_id", { ascending: true }).order("role_id", { ascending: true });
   if (accessErr) throw new Error(accessErr.message || "Failed to fetch access rows.");
   const accessRows = mapUserAccessRows(ensureArray(accessData), { applications: lookupData.applications, roles: lookupData.roles });
 
