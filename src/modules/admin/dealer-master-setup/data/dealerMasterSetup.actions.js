@@ -2,34 +2,18 @@
 
 import zipcodes from "zipcodes-us";
 import { getSupabaseAdmin } from "@/core/supabase/admin";
-import { getCurrentSession } from "@/core/auth/session.service";
+import { requireDealerAdmin } from "./dealerAdminAccess.js";
 import {
   DEALER_ACCOUNT_TABLE,
   hashDealerPassword,
   normalizeDealerUsername,
 } from "@/core/dealer/dealerAuth";
 import { decryptDealerPassword, encryptDealerPassword } from "@/core/dealer/dealerPasswordVault";
+import { removeStoredFiles } from "@/core/storage/files.service";
 
 // ─── Private helpers ───────────────────────────────────────
 
 const DEALER_TABLE = "psb_s_dealermaster";
-
-const REQUIRED_TEXT_FIELDS = { dealer_code: "Dealer code", dealer_name: "Dealer name" };
-
-const OPTIONAL_TEXT_FIELDS = [
-  "contact_person",
-  "email",
-  "phone",
-  "mobile",
-  "address_line1",
-  "address_line2",
-  "city",
-  "state",
-  "postal_code",
-  "tax_id",
-  "payment_terms",
-  "remarks",
-];
 
 // Offline US ZIP data (zipcodes-us) for the cascading State → City → ZIP dropdowns.
 // The package has no "list everything" call, so a radius wider than half the
@@ -38,58 +22,8 @@ const ALL_ZIPS_CENTER = { latitude: 39.8283, longitude: -98.5795 };
 const ALL_ZIPS_RADIUS_MILES = 13000;
 let usAddressIndex = null;
 
-function hasOwn(source, key) {
-  return Object.prototype.hasOwnProperty.call(source || {}, key);
-}
-
 function normalizeText(value) {
   return String(value ?? "").trim();
-}
-
-function sanitizeOptionalText(value) {
-  const text = normalizeText(value);
-  return text === "" ? null : text;
-}
-
-function normalizeBoolean(value) {
-  if (typeof value === "boolean") return value;
-  if (typeof value === "number") return value !== 0;
-  const text = String(value ?? "").trim().toLowerCase();
-  if (!text) return false;
-  return !(text === "false" || text === "0" || text === "n" || text === "no" || text === "f");
-}
-
-function normalizeCreditLimit(value) {
-  const text = normalizeText(value);
-  if (text === "") return null;
-  const amount = Number(text);
-  if (!Number.isFinite(amount) || amount < 0) throw new Error("Credit limit must be a number of 0 or more.");
-  return amount;
-}
-
-function buildDealerPayloadFromInput(input) {
-  const payload = {};
-
-  for (const [field, label] of Object.entries(REQUIRED_TEXT_FIELDS)) {
-    if (!hasOwn(input, field)) continue;
-    const text = normalizeText(input[field]);
-    if (!text) throw new Error(`${label} is required.`);
-    payload[field] = text;
-  }
-  for (const field of OPTIONAL_TEXT_FIELDS) {
-    if (hasOwn(input, field)) payload[field] = sanitizeOptionalText(input[field]);
-  }
-  if (hasOwn(input, "credit_limit")) {
-    payload.credit_limit = normalizeCreditLimit(input.credit_limit);
-  }
-  if (hasOwn(input, "is_active")) {
-    payload.is_active = normalizeBoolean(input.is_active);
-  }
-  return payload;
-}
-
-function assertValidPayload(payload, message) {
-  if (!payload || Object.keys(payload).length === 0) throw new Error(message);
 }
 
 function toDealerError(error, fallback) {
@@ -133,6 +67,7 @@ function getUsAddressIndex() {
  * them directly as its seed list.
  */
 export async function loadDealerMasterSetupData() {
+  await requireDealerAdmin();
   const supabase = getSupabaseAdmin();
 
   const { data, error } = await supabase
@@ -179,126 +114,14 @@ export async function loadUsCitiesByStateAction(stateCode) {
     .sort((left, right) => left.city.localeCompare(right.city));
 }
 
-/**
- * Inserts a new dealer row.
- *
- * The payload is built from the draft, so only present fields are
- * written and absent optional fields stay untouched (they keep the
- * database defaults). `country` is never sent — the table supplies
- * its own 'US' default.
- */
-export async function createDealerAction(payload) {
-  const supabase = getSupabaseAdmin();
-
-  const createPayload = buildDealerPayloadFromInput({
-    ...(payload || {}),
-    dealer_code: payload?.dealer_code,
-    dealer_name: payload?.dealer_name,
-    is_active: hasOwn(payload || {}, "is_active") ? payload?.is_active : true,
-  });
-
-  assertValidPayload(createPayload, "No valid dealer payload supplied.");
-
-  const { data, error } = await supabase.from(DEALER_TABLE).insert(createPayload).select("*").single();
-  if (error) throw toDealerError(error, "Failed to create dealer");
-  return data;
-}
-
-/**
- * Applies a staged edit to an existing dealer row.
- *
- * `updated_at` is stamped here (not in the form) so every write path
- * records the same audit timestamp regardless of who triggered it.
- */
-export async function updateDealerAction(dealerId, updates) {
-  const supabase = getSupabaseAdmin();
-
-  const payload = buildDealerPayloadFromInput(updates);
-  assertValidPayload(payload, "No valid dealer updates supplied.");
-  payload.updated_at = new Date().toISOString();
-
-  const { data, error } = await supabase.from(DEALER_TABLE).update(payload).eq("dealer_id", dealerId).select("*").single();
-  if (error) throw toDealerError(error, "Failed to update dealer");
-  return data;
-}
-
-/** Soft-deactivates a dealer (is_active = false). The row is kept. */
-export async function deactivateDealerAction(dealerId) {
-  const supabase = getSupabaseAdmin();
-  const { error } = await supabase
-    .from(DEALER_TABLE)
-    .update({ is_active: false, updated_at: new Date().toISOString() })
-    .eq("dealer_id", dealerId)
-    .select("*")
-    .single();
-  if (error) throw new Error(error.message || "Failed to deactivate dealer");
-  return { dealerId, deactivated: true };
-}
-
-/** Permanently removes a dealer row. Only reachable via Save Batch. */
-export async function hardDeleteDealerAction(dealerId) {
-  const supabase = getSupabaseAdmin();
-  const { error } = await supabase.from(DEALER_TABLE).delete().eq("dealer_id", dealerId);
-  if (error) throw new Error(error.message || "Failed to permanently delete dealer");
-  return { dealerId, permanentlyDeleted: true };
-}
-
-// Same prefix as TEMP_DEALER_PREFIX in dealerMasterSetup.data.js.
-const TEMP_DEALER_ID_PREFIX = "tmp-dealer-";
-
-/**
- * Saves a whole staged batch in ONE call from the browser (it used to be one
- * call per change). Same step order as before: creates → edits →
- * deactivations → permanent deletes; the items of each step run together.
- */
-export async function saveDealerBatch(dealerChanges) {
-  const changes = dealerChanges || {};
-  const tempIdMap = {};
-  const isTempDealer = (id) => String(id ?? "").startsWith(TEMP_DEALER_ID_PREFIX);
-  const resolveDealerId = (id) => tempIdMap[String(id ?? "")] ?? id;
-  const deactivatedSet = new Set(
-    [...(changes.deactivations || []), ...(changes.hardDeletes || [])].map((id) => String(id ?? "")),
-  );
-
-  await Promise.all((changes.creates || []).map(async (entry) => {
-    const created = await createDealerAction(entry.payload);
-    const createdId = created?.dealer_id;
-    if (createdId === undefined || createdId === null || createdId === "") throw new Error("Created dealer response is invalid.");
-    tempIdMap[String(entry.tempId)] = createdId;
-  }));
-
-  await Promise.all(Object.entries(changes.updates || {}).map(async ([dealerId, updates]) => {
-    const resolved = resolveDealerId(dealerId);
-    if (deactivatedSet.has(String(resolved)) || isTempDealer(resolved)) return;
-    if (Object.keys(updates || {}).length === 0) return;
-    await updateDealerAction(resolved, updates);
-  }));
-
-  await Promise.all((changes.deactivations || []).map(async (dealerId) => {
-    const resolved = resolveDealerId(dealerId);
-    if (!isTempDealer(resolved)) await deactivateDealerAction(resolved);
-  }));
-
-  await Promise.all((changes.hardDeletes || []).map(async (dealerId) => {
-    const resolved = resolveDealerId(dealerId);
-    if (!isTempDealer(resolved)) await hardDeleteDealerAction(resolved);
-  }));
-}
-
 function toDealerAccountError(error, fallback) {
   if (error?.code === "23505") return new Error("That username is already in use.");
   return new Error(error?.message || fallback);
 }
 
-// Dealer credentials may only be read or set by a signed-in internal user.
-async function requireStaffSession() {
-  const session = await getCurrentSession();
-  if (!session?.userId) throw new Error("Not authenticated.");
-  return session;
-}
-
+// Dealer logins may only be read or set by staff with a dealer admin role.
 export async function loadDealerLoginAction(dealerId) {
-  await requireStaffSession();
+  await requireDealerAdmin();
   if (!dealerId) return null;
 
   const supabase = getSupabaseAdmin();
@@ -323,7 +146,7 @@ export async function loadDealerLoginAction(dealerId) {
  * copy is stored (passwords set before copies were kept).
  */
 export async function revealDealerPasswordAction(dealerId) {
-  await requireStaffSession();
+  await requireDealerAdmin();
   if (!dealerId) return null;
 
   const supabase = getSupabaseAdmin();
@@ -341,7 +164,7 @@ export async function revealDealerPasswordAction(dealerId) {
 }
 
 export async function saveDealerLoginAction(dealerId, input = {}) {
-  await requireStaffSession();
+  await requireDealerAdmin();
   if (!dealerId) throw new Error("Dealer is required.");
 
   const supabase = getSupabaseAdmin();
@@ -400,4 +223,154 @@ export async function saveDealerLoginAction(dealerId, input = {}) {
 
   if (error) throw toDealerAccountError(error, "Failed to create dealer login.");
   return { ...data, created: true };
+}
+
+// ─── Enroll, activate/deactivate, delete (saved right away) ─
+
+// Same names as in src/modules/dealer/data/dealerPortal.actions.js.
+const DEALER_FILE_TABLE = "psb_m_dealerfile";
+const DEALER_FILE_BUCKET = "dealer-files";
+
+// New dealer codes: "D" + a letter + 3 digits — DA001 … DA999, DB001 … DZ999.
+// Codes in any other format (older dealers) are left alone and ignored here.
+const DEALER_CODE_PATTERN = /^D([A-Z])(\d{3})$/;
+const DEALER_CODES_PER_LETTER = 999;
+const DEALER_CODE_MAX = 26 * DEALER_CODES_PER_LETTER;
+const ENROLL_CODE_ATTEMPTS = 5;
+const EMAIL_PATTERN = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
+
+/** DA001 → 1, DA999 → 999, DB001 → 1000 … DZ999 → 25974; anything else → 0. */
+function dealerCodeToNumber(code) {
+  const match = DEALER_CODE_PATTERN.exec(normalizeText(code));
+  if (!match || Number(match[2]) < 1) return 0;
+  return (match[1].charCodeAt(0) - 65) * DEALER_CODES_PER_LETTER + Number(match[2]);
+}
+
+function numberToDealerCode(value) {
+  const letter = String.fromCharCode(65 + Math.floor((value - 1) / DEALER_CODES_PER_LETTER));
+  const number = String(((value - 1) % DEALER_CODES_PER_LETTER) + 1).padStart(3, "0");
+  return `D${letter}${number}`;
+}
+
+/** The code after the highest DA001–DZ999 code in use. */
+async function findNextDealerCode(supabase) {
+  const { data, error } = await supabase.from(DEALER_TABLE).select("dealer_code").like("dealer_code", "D%");
+  if (error) throw new Error(error.message || "Failed to read dealer codes.");
+  const highest = (data || []).reduce((max, row) => Math.max(max, dealerCodeToNumber(row?.dealer_code)), 0);
+  if (highest >= DEALER_CODE_MAX) throw new Error("No dealer codes are left (DZ999 is in use).");
+  return numberToDealerCode(highest + 1);
+}
+
+/**
+ * Enrolls a dealer: creates the dealer with the next dealer code and its
+ * portal login together. The rest of the dealer's details are filled in
+ * afterwards by logging in as the dealer.
+ */
+export async function enrollDealerAction(input = {}) {
+  await requireDealerAdmin();
+
+  const dealerName = normalizeText(input?.dealer_name);
+  const email = normalizeText(input?.email);
+  const phone = normalizeText(input?.phone);
+  if (!dealerName) throw new Error("Dealer name is required.");
+  if (!EMAIL_PATTERN.test(email)) throw new Error("Please enter a valid email address.");
+  if (!phone) throw new Error("Phone is required.");
+  const username = normalizeDealerUsername(input?.username);
+  const password = typeof input?.password === "string" ? input.password : "";
+  const passwordHash = await hashDealerPassword(password);
+
+  const supabase = getSupabaseAdmin();
+  const { data: takenAccount, error: usernameError } = await supabase
+    .from(DEALER_ACCOUNT_TABLE)
+    .select("account_id")
+    .eq("username", username)
+    .maybeSingle();
+  if (usernameError && usernameError.code !== "PGRST116") {
+    throw new Error(usernameError.message || "Failed to check the username.");
+  }
+  if (takenAccount) throw new Error("That username is already in use.");
+
+  // Two admins enrolling at once can pick the same code: the unique key on
+  // dealer_code refuses the second insert, which then tries the next code.
+  let dealer = null;
+  for (let attempt = 0; attempt < ENROLL_CODE_ATTEMPTS && !dealer; attempt += 1) {
+    const dealerCode = await findNextDealerCode(supabase);
+    const { data, error } = await supabase
+      .from(DEALER_TABLE)
+      .insert({ dealer_code: dealerCode, dealer_name: dealerName, email, phone, is_active: true })
+      .select("*")
+      .single();
+    if (!error) dealer = data;
+    else if (error.code !== "23505") throw toDealerError(error, "Failed to enroll dealer.");
+  }
+  if (!dealer) throw new Error("Could not assign a dealer code. Please try again.");
+
+  const now = new Date().toISOString();
+  const { error: accountError } = await supabase.from(DEALER_ACCOUNT_TABLE).insert({
+    dealer_id: dealer.dealer_id,
+    username,
+    password_hash: passwordHash,
+    password_encrypted: encryptDealerPassword(password),
+    is_active: true,
+    created_at: now,
+    updated_at: now,
+  });
+  if (accountError) {
+    // A dealer without its login is of no use, so it is removed again.
+    await supabase.from(DEALER_TABLE).delete().eq("dealer_id", dealer.dealer_id);
+    throw toDealerAccountError(accountError, "Failed to create the dealer login.");
+  }
+
+  return { dealer, username };
+}
+
+/** Switches a dealer on or off right away. */
+export async function setDealerActiveAction(dealerId, isActive) {
+  await requireDealerAdmin();
+  if (!dealerId) throw new Error("Dealer is required.");
+
+  const supabase = getSupabaseAdmin();
+  const { data, error } = await supabase
+    .from(DEALER_TABLE)
+    .update({ is_active: Boolean(isActive), updated_at: new Date().toISOString() })
+    .eq("dealer_id", dealerId)
+    .select("*")
+    .single();
+  if (error) throw new Error(error.message || "Failed to update the dealer.");
+  return data;
+}
+
+/**
+ * Permanently deletes a dealer once the typed code matches its dealer code.
+ * The database removes its login, file records and links with it; the
+ * uploaded files are then removed from storage.
+ */
+export async function deleteDealerAction(dealerId, typedCode) {
+  await requireDealerAdmin();
+  if (!dealerId) throw new Error("Dealer is required.");
+
+  const supabase = getSupabaseAdmin();
+  const { data: dealer, error: loadError } = await supabase
+    .from(DEALER_TABLE)
+    .select("dealer_id, dealer_code")
+    .eq("dealer_id", dealerId)
+    .maybeSingle();
+  if (loadError && loadError.code !== "PGRST116") throw new Error(loadError.message || "Failed to load the dealer.");
+  if (!dealer) throw new Error("That dealer no longer exists.");
+  if (normalizeText(typedCode).toUpperCase() !== normalizeText(dealer.dealer_code).toUpperCase()) {
+    throw new Error("The dealer code you typed does not match.");
+  }
+
+  const { data: files } = await supabase.from(DEALER_FILE_TABLE).select("storage_path").eq("dealer_id", dealerId);
+
+  const { error } = await supabase.from(DEALER_TABLE).delete().eq("dealer_id", dealerId);
+  if (error) throw new Error(error.message || "Failed to delete the dealer.");
+
+  // The dealer is already gone; a storage problem only leaves unused files behind.
+  try {
+    await removeStoredFiles({ bucket: DEALER_FILE_BUCKET, storagePaths: (files || []).map((file) => file.storage_path) });
+  } catch (storageError) {
+    console.error("deleteDealerAction storage:", storageError?.message);
+  }
+  return { dealerId, deleted: true };
 }

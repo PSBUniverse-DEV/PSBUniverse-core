@@ -7,22 +7,16 @@ import {
   revealDealerPasswordAction,
   saveDealerLoginAction,
 } from "../data/dealerMasterSetup.actions.js";
+import { generateDealerPassword } from "../data/dealerMasterSetup.data.js";
 
-const PASSWORD_CHARS = "ABCDEFGHJKLMNPQRSTUVWXYZabcdefghijkmnopqrstuvwxyz23456789!@#$%&*?";
 const HIDDEN_PASSWORD = "••••••••••••";
 const UNREADABLE_PASSWORD = "This password can't be shown. Use Update credentials to set a new one.";
-
-function generatePassword(length = 16) {
-  const values = new Uint32Array(length);
-  window.crypto.getRandomValues(values);
-  return Array.from(values, (value) => PASSWORD_CHARS[value % PASSWORD_CHARS.length]).join("");
-}
 
 function isLocked(account) {
   return Boolean(account?.locked_until) && new Date(account.locked_until).getTime() > Date.now();
 }
 
-// Saves on its own, independent of the page's Save Batch. A dealer that has a
+// Saves on its own as soon as staff click Save. A dealer that has a
 // login opens read-only; "Update credentials" switches to editing.
 export default function DealerLoginModal({ dealer, onClose }) {
   const dealerId = dealer?.dealer_id;
@@ -170,7 +164,7 @@ export default function DealerLoginModal({ dealer, onClose }) {
               <Button type="button" variant="secondary" disabled={isSaving} onClick={() => setShowNewPassword((shown) => !shown)}>
                 {showNewPassword ? "Hide" : "Show"}
               </Button>
-              <Button type="button" variant="secondary" disabled={isSaving} onClick={() => { setPassword(generatePassword()); setShowNewPassword(true); }}>
+              <Button type="button" variant="secondary" disabled={isSaving} onClick={() => { setPassword(generateDealerPassword()); setShowNewPassword(true); }}>
                 Generate
               </Button>
             </div>
