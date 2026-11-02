@@ -18,7 +18,8 @@ function isActiveRow(record) {
   return !["false", "0", "f", "n", "no"].includes(normalized);
 }
 
-async function userHasDealerAdminRole(userId) {
+/** True when the user has an active admin-enroll or admin-master role. Also used by the dealer portal's staff view. */
+export async function userHasDealerAdminRole(userId) {
   if (!userId) return false;
   const supabase = getSupabaseAdmin();
 

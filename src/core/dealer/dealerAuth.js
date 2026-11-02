@@ -58,8 +58,14 @@ export async function verifyDealerPassword(password, passwordHash) {
   return bcrypt.compare(String(password ?? ""), passwordHash);
 }
 
-export async function createDealerSessionToken({ dealerId, accountId, username }) {
-  return new SignJWT({ dealerId, accountId, username })
+/**
+ * `staff` is set only by "Login as dealer": { userId, name } of the PSB staff
+ * member viewing the account. A dealer's own sign-in never has it.
+ */
+export async function createDealerSessionToken({ dealerId, accountId, username, staff = null }) {
+  const claims = { dealerId, accountId, username };
+  if (staff?.userId) claims.staff = { userId: staff.userId, name: String(staff.name || "") };
+  return new SignJWT(claims)
     .setProtectedHeader({ alg: "HS256" })
     .setAudience(DEALER_SESSION_AUDIENCE)
     .setIssuedAt()
@@ -67,13 +73,18 @@ export async function createDealerSessionToken({ dealerId, accountId, username }
     .sign(getDealerSecretKey());
 }
 
-/** Returns { dealerId, accountId, username } or null when the token is missing, invalid or expired. */
+/**
+ * Returns { dealerId, accountId, username, staff } or null when the token is
+ * missing, invalid or expired. `staff` is { userId, name } in a "Login as
+ * dealer" session, otherwise null.
+ */
 export async function verifyDealerSessionToken(token) {
   if (!token) return null;
   try {
     const { payload } = await jwtVerify(token, getDealerSecretKey(), { audience: DEALER_SESSION_AUDIENCE });
     if (!payload?.dealerId) return null;
-    return { dealerId: payload.dealerId, accountId: payload.accountId, username: payload.username };
+    const staff = payload.staff?.userId ? { userId: payload.staff.userId, name: String(payload.staff.name || "") } : null;
+    return { dealerId: payload.dealerId, accountId: payload.accountId, username: payload.username, staff };
   } catch {
     return null;
   }

@@ -8,7 +8,7 @@ import DealerPasswordForm from "./DealerPasswordForm";
 import DealerAttachments from "./DealerAttachments";
 import DealerProjects from "./DealerProjects";
 import DealerAccountView from "../pages/DealerAccountView";
-import { COMPANY_FIELDS, CONTACT_FIELDS } from "../data/dealerPortal.data";
+import { COMPANY_FIELDS, CONTACT_FIELDS, STAFF_COMPANY_FIELDS } from "../data/dealerPortal.data";
 
 const SECTIONS = ["overview", "company", "contacts", "address", "security", "projects", "support"];
 const PSB_CONTACT = { email: "Sales.pgd@premiumsteelgroup.com", phone: "817-502-2520" };
@@ -46,6 +46,7 @@ export default function DealerAccountWorkspace({
   lockMinutes,
   files,
   projects,
+  staff = null,
 }) {
   const section = useSyncExternalStore(subscribeToHash, readSectionFromHash, readSectionOnServer);
 
@@ -53,13 +54,15 @@ export default function DealerAccountWorkspace({
     window.location.hash = key;
   }, []);
 
+  // Staff edit the plain credit limit number; dealers see it formatted.
   const companyValues = useMemo(() => ({
     dealer_name: dealer.dealer_name ?? "",
     dealer_code: dealer.dealer_code ?? "",
     tax_id: dealer.tax_id ?? "",
     payment_terms: dealer.payment_terms ?? "",
-    credit_limit: creditLimitText || "",
-  }), [dealer, creditLimitText]);
+    credit_limit: staff ? String(dealer.credit_limit ?? "") : creditLimitText || "",
+    ...(staff ? { remarks: dealer.remarks ?? "" } : {}),
+  }), [dealer, creditLimitText, staff]);
 
   const contactValues = useMemo(() => ({
     contact_person: dealer.contact_person ?? "",
@@ -78,7 +81,7 @@ export default function DealerAccountWorkspace({
   }), [dealer]);
 
   return (
-    <DealerShell dealer={dealer} username={username} active={section} onSelect={selectSection}>
+    <DealerShell dealer={dealer} username={username} staff={staff} active={section} onSelect={selectSection}>
       <div hidden={section !== "overview"}>
         <DealerAccountView
           dealer={dealer}
@@ -96,7 +99,7 @@ export default function DealerAccountWorkspace({
               <p>Details about your business. Fields marked &quot;Set by PSB&quot; can only be changed by PSB staff.</p>
             </div>
           </div>
-          <DealerProfileForm section="company" title="Business details" fields={COMPANY_FIELDS} initialValues={companyValues} />
+          <DealerProfileForm section="company" title="Business details" fields={staff ? STAFF_COMPANY_FIELDS : COMPANY_FIELDS} initialValues={companyValues} />
           <DealerAttachments initialFiles={files} />
         </section>
       </div>
@@ -134,7 +137,17 @@ export default function DealerAccountWorkspace({
             </div>
           </div>
           <div className="dp-split">
-            <DealerPasswordForm />
+            {staff ? (
+              <div className="dp-panel">
+                <div className="dp-panel-head"><h2>Password</h2></div>
+                <div className="dp-panel-body dp-muted-list">
+                  <p>You are viewing this account as PSB staff.</p>
+                  <p>To see or change this dealer&apos;s password, use the key button in Dealer Master Setup.</p>
+                </div>
+              </div>
+            ) : (
+              <DealerPasswordForm />
+            )}
             <div className="dp-stack">
               <div className="dp-panel">
                 <div className="dp-panel-head"><h2>Login details</h2></div>

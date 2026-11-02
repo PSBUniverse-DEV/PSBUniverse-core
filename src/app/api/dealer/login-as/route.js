@@ -24,7 +24,8 @@ function json(body, status, extraHeaders = []) {
 
 export async function POST(request) {
   try {
-    if (!(await getDealerAdminSession())) {
+    const staffSession = await getDealerAdminSession();
+    if (!staffSession) {
       return json({ success: false, error: DEALER_ADMIN_NO_ACCESS }, 403);
     }
 
@@ -54,6 +55,7 @@ export async function POST(request) {
       dealerId: account.dealer_id,
       accountId: account.account_id,
       username: account.username,
+      staff: { userId: staffSession.userId, name: staffSession.fullName || staffSession.email || "" },
     });
     const secure = new URL(request.url).protocol === "https:";
     return json({ success: true }, 200, [["Set-Cookie", buildDealerSessionCookie(token, { secure })]]);

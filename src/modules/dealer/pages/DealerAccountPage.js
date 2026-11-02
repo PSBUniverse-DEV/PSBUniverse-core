@@ -39,6 +39,7 @@ export default async function DealerAccountPage() {
     <DealerAccountWorkspace
       dealer={data.dealer}
       username={data.username}
+      staff={data.staff}
       states={states}
       creditLimitText={formatMoney(data.dealer.credit_limit)}
       dealerSinceText={formatDate(data.dealer.created_at)}

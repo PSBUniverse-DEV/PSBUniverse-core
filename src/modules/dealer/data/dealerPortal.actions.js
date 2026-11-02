@@ -8,13 +8,14 @@ import {
   verifyDealerPassword,
 } from "@/core/dealer/dealerAuth";
 import { encryptDealerPassword } from "@/core/dealer/dealerPasswordVault";
+import { userHasDealerAdminRole } from "@/modules/admin/dealer-master-setup/data/dealerAdminAccess.js";
 import { assertFileAllowed, createSignedFileUpload, getSignedFileUrl } from "@/core/storage/files.service";
 import { loadDealerRecords } from "@/core/dealer/dealerRecordSources";
 import { DEALER_DOC_TYPES, DEALER_FILE_ACCEPT, DEALER_FILE_MAX_BYTES } from "./dealerPortal.data";
 
 const DEALER_TABLE = "psb_s_dealermaster";
 
-// `remarks` is PSB's internal note and is deliberately left out.
+// `remarks` is PSB's internal note: left out for dealers, added for PSB staff (see loadDealerContext).
 const DEALER_COLUMNS =
   "dealer_id, dealer_code, dealer_name, contact_person, email, phone, mobile, address_line1, address_line2, city, state, postal_code, country, tax_id, payment_terms, credit_limit, is_active, created_at";
 
@@ -22,6 +23,11 @@ const EDITABLE_FIELDS = {
   company: ["dealer_name", "tax_id"],
   contacts: ["contact_person", "email", "phone", "mobile"],
   address: ["address_line1", "address_line2", "state", "city", "postal_code"],
+};
+
+// Fields only PSB staff may change, in the staff view ("Login as dealer").
+const STAFF_EDITABLE_FIELDS = {
+  company: ["payment_terms", "credit_limit", "remarks"],
 };
 
 const FIELD_MAX_LENGTH = 200;
@@ -100,18 +106,24 @@ async function loadDealerContext({ withPasswordHash = false } = {}) {
   const session = await getDealerSession();
   if (!session?.dealerId) return null;
 
+  // "Login as dealer": the staff view ends as soon as the staff member loses
+  // the admin-enroll / admin-master role.
+  const staff = session.staff || null;
+  if (staff && !(await userHasDealerAdminRole(staff.userId))) return null;
+
   const supabase = getSupabaseAdmin();
   const accountColumns = withPasswordHash
     ? "account_id, username, is_active, last_login_at, password_hash"
     : "account_id, username, is_active, last_login_at";
+  const dealerColumns = staff ? `${DEALER_COLUMNS}, remarks` : DEALER_COLUMNS;
 
   const [{ data: account }, { data: dealer }] = await Promise.all([
     supabase.from(DEALER_ACCOUNT_TABLE).select(accountColumns).eq("dealer_id", session.dealerId).maybeSingle(),
-    supabase.from(DEALER_TABLE).select(DEALER_COLUMNS).eq("dealer_id", session.dealerId).maybeSingle(),
+    supabase.from(DEALER_TABLE).select(dealerColumns).eq("dealer_id", session.dealerId).maybeSingle(),
   ]);
 
   if (!account || account.is_active === false || !dealer || dealer.is_active === false) return null;
-  return { supabase, account, dealer };
+  return { supabase, account, dealer, staff };
 }
 
 /**
@@ -125,6 +137,7 @@ export async function loadDealerAccountData() {
     status: "ok",
     dealer: context.dealer,
     username: context.account.username,
+    staff: context.staff ? { name: context.staff.name } : null,
     lastLoginAt: context.account.last_login_at || null,
     files: await loadDealerFiles(context.supabase, context.dealer.dealer_id),
     projects: await loadDealerProjects(context.dealer.dealer_id),
@@ -139,8 +152,10 @@ export async function updateDealerProfileAction(section, values) {
   const context = await loadDealerContext();
   if (!context) return { success: false, error: SESSION_ENDED };
 
-  const fields = EDITABLE_FIELDS[section];
-  if (!fields) return { success: false, error: "Unknown form." };
+  if (!EDITABLE_FIELDS[section]) return { success: false, error: "Unknown form." };
+  const fields = context.staff
+    ? [...EDITABLE_FIELDS[section], ...(STAFF_EDITABLE_FIELDS[section] || [])]
+    : EDITABLE_FIELDS[section];
 
   const payload = {};
   for (const field of fields) {
@@ -153,6 +168,13 @@ export async function updateDealerProfileAction(section, values) {
 
   if (section === "company" && !payload.dealer_name) {
     return { success: false, error: "Dealer name is required." };
+  }
+  if (payload.credit_limit !== undefined && payload.credit_limit !== null) {
+    const amount = Number(payload.credit_limit);
+    if (!Number.isFinite(amount) || amount < 0) {
+      return { success: false, error: "Credit limit must be a number of 0 or more." };
+    }
+    payload.credit_limit = amount;
   }
   if (section === "contacts" && payload.email && !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(payload.email)) {
     return { success: false, error: "Please enter a valid email address." };
@@ -292,7 +314,7 @@ export async function saveDealerFileAction({ storagePath, name, type, size, docT
       doc_type: docType,
       note: cleanNote || null,
       status_id: Number(newStatus[0]),
-      uploaded_by: "dealer",
+      uploaded_by: context.staff ? "psb" : "dealer",
     })
     .select(DEALER_FILE_COLUMNS)
     .single();
