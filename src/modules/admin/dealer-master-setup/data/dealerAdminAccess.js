@@ -1,4 +1,5 @@
 import "server-only";
+import { cache } from "react";
 import { getCurrentSession } from "@/core/auth/session.service";
 import { getSupabaseAdmin } from "@/core/supabase/admin";
 
@@ -41,12 +42,16 @@ async function userHasDealerAdminRole(userId) {
   );
 }
 
-/** The signed-in staff session when it may manage dealers, otherwise null. */
-export async function getDealerAdminSession() {
+/**
+ * The signed-in staff session when it may manage dealers, otherwise null.
+ * Cached for the current request only: the page and the actions it calls
+ * share one check, while every new request (each save) checks again.
+ */
+export const getDealerAdminSession = cache(async () => {
   const session = await getCurrentSession();
   if (!session?.userId) return null;
   return (await userHasDealerAdminRole(session.userId)) ? session : null;
-}
+});
 
 /** Same as getDealerAdminSession, but throws for anyone who may not manage dealers. */
 export async function requireDealerAdmin() {

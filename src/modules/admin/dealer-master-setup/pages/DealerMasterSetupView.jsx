@@ -1,7 +1,6 @@
 "use client";
 import { useCallback, useMemo, useState } from "react";
 // ─── HOOK: useDealerMasterSetup ────────────────────────────
-import { useRouter } from "next/navigation";
 import { Button, Card, Input, Modal, StatusBadge, TableZ, toastError, toastSuccess } from "@/shared/components/ui";
 import { deleteDealerAction, enrollDealerAction, setDealerActiveAction } from "../data/dealerMasterSetup.actions.js";
 import DealerLoginModal from "./DealerLoginModal.jsx";
@@ -14,16 +13,24 @@ import {
   normalizeText,
 } from "../data/dealerMasterSetup.data.js";
 
-export function useDealerMasterSetup({ dealers = [] }) {
-  const router = useRouter();
+/** Table rows in display order (dealer name). */
+function toSortedRows(list) {
+  return (Array.isArray(list) ? list : [])
+    .map((dealer, index) => mapDealerRow(dealer, index))
+    .sort((left, right) => compareText(left.dealer_name, right.dealer_name));
+}
 
-  const rows = useMemo(
-    () =>
-      (Array.isArray(dealers) ? dealers : [])
-        .map((dealer, index) => mapDealerRow(dealer, index))
-        .sort((left, right) => compareText(left.dealer_name, right.dealer_name)),
-    [dealers],
-  );
+export function useDealerMasterSetup({ dealers = [] }) {
+  const seedRows = useMemo(() => toSortedRows(dealers), [dealers]);
+
+  // Saves update this copy directly instead of reloading the page. Fresh
+  // server data (a normal page load) replaces it.
+  const [rows, setRows] = useState(seedRows);
+  const [rowsSeed, setRowsSeed] = useState(seedRows);
+  if (rowsSeed !== seedRows) {
+    setRowsSeed(seedRows);
+    setRows(seedRows);
+  }
 
   const [isMutatingAction, setIsMutatingAction] = useState(false);
   const [dialog, setDialog] = useState(EMPTY_DIALOG);
@@ -58,23 +65,24 @@ export function useDealerMasterSetup({ dealers = [] }) {
   // -- saving (every change is saved right away)
 
   /**
-   * Runs one server change, then reloads the page data. On failure the
-   * error is shown and the dialog stays open, so nothing typed is lost.
+   * Runs one server change and applies its result to the table, without
+   * reloading the page. On failure the error is shown and the dialog stays
+   * open, so nothing typed is lost.
    */
-  const runAction = useCallback(async (work, successMessage) => {
+  const runAction = useCallback(async (work, successMessage, applyResult) => {
     if (isMutatingAction) return;
     setIsMutatingAction(true);
     try {
       const result = await work();
+      applyResult?.(result);
       setDialog(EMPTY_DIALOG);
-      router.refresh();
       toastSuccess(typeof successMessage === "function" ? successMessage(result) : successMessage, "Dealer Master");
     } catch (error) {
       toastError(error?.message || "Failed to save the change.");
     } finally {
       setIsMutatingAction(false);
     }
-  }, [isMutatingAction, router]);
+  }, [isMutatingAction]);
 
   /** Enrolls the dealer and creates its portal login. The server assigns the dealer code. */
   const submitEnrollDealer = useCallback(() => {
@@ -86,6 +94,7 @@ export function useDealerMasterSetup({ dealers = [] }) {
     runAction(
       () => enrollDealerAction(enrollDraft),
       (result) => `${result?.dealer?.dealer_name || "Dealer"} enrolled as ${result?.dealer?.dealer_code || "a new dealer"}.`,
+      (result) => { if (result?.dealer) setRows((prev) => toSortedRows([...prev, result.dealer])); },
     );
   }, [enrollDraft, runAction]);
 
@@ -93,13 +102,24 @@ export function useDealerMasterSetup({ dealers = [] }) {
     const row = dialog?.target;
     if (!row?.dealer_id) { toastError("Invalid dealer."); return; }
     const nextIsActive = Boolean(dialog?.nextIsActive);
-    runAction(() => setDealerActiveAction(row.dealer_id, nextIsActive), nextIsActive ? "Dealer enabled." : "Dealer disabled.");
+    runAction(
+      () => setDealerActiveAction(row.dealer_id, nextIsActive),
+      nextIsActive ? "Dealer enabled." : "Dealer disabled.",
+      (updated) => {
+        if (!updated) return;
+        setRows((prev) => toSortedRows(prev.map((dealer) => (String(dealer.dealer_id) === String(updated.dealer_id) ? updated : dealer))));
+      },
+    );
   }, [dialog?.nextIsActive, dialog?.target, runAction]);
 
   const submitDeleteDealer = useCallback(() => {
     const row = dialog?.target;
     if (!row?.dealer_id) { toastError("Invalid dealer."); return; }
-    runAction(() => deleteDealerAction(row.dealer_id, deleteConfirmText), `Dealer ${row.dealer_code || ""} deleted.`);
+    runAction(
+      () => deleteDealerAction(row.dealer_id, deleteConfirmText),
+      `Dealer ${row.dealer_code || ""} deleted.`,
+      () => setRows((prev) => prev.filter((dealer) => String(dealer.dealer_id) !== String(row.dealer_id))),
+    );
   }, [deleteConfirmText, dialog?.target, runAction]);
 
   /**

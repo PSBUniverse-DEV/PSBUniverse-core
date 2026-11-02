@@ -3,7 +3,7 @@
 import { useEffect, useMemo, useState } from "react";
 import { useRouter } from "next/navigation";
 import { SearchSelect, toastError, toastSuccess } from "@/shared/components/ui";
-import { loadUsCitiesByStateAction } from "@/modules/admin/dealer-master-setup/data/dealerMasterSetup.actions.js";
+import { loadUsCitiesByStateAction } from "../data/usAddress.actions";
 import { updateDealerProfileAction } from "../data/dealerPortal.actions";
 
 const TITLE = "Business address";

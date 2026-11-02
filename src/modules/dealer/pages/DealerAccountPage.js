@@ -1,7 +1,7 @@
 import { redirect } from "next/navigation";
 import DealerAccountWorkspace from "../components/DealerAccountWorkspace";
 import { loadDealerAccountData } from "../data/dealerPortal.actions";
-import { loadUsStatesAction } from "@/modules/admin/dealer-master-setup/data/dealerMasterSetup.actions.js";
+import { loadUsStatesAction } from "../data/usAddress.actions";
 import { DEALER_LOCK_MINUTES, DEALER_MAX_FAILED_ATTEMPTS } from "@/core/dealer/dealerAuth";
 
 export const dynamic = "force-dynamic";
