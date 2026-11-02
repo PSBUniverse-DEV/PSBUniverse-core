@@ -8,6 +8,7 @@ import {
   hashDealerPassword,
   normalizeDealerUsername,
 } from "@/core/dealer/dealerAuth";
+import { decryptDealerPassword, encryptDealerPassword } from "@/core/dealer/dealerPasswordVault";
 
 // ─── Private helpers ───────────────────────────────────────
 
@@ -303,7 +304,7 @@ export async function loadDealerLoginAction(dealerId) {
   const supabase = getSupabaseAdmin();
   const { data, error } = await supabase
     .from(DEALER_ACCOUNT_TABLE)
-    .select("account_id, dealer_id, username, is_active, failed_attempts, locked_until, last_login_at, created_at, updated_at")
+    .select("account_id, dealer_id, username, is_active, failed_attempts, locked_until, last_login_at, created_at, updated_at, password_encrypted")
     .eq("dealer_id", dealerId)
     .maybeSingle();
 
@@ -311,7 +312,32 @@ export async function loadDealerLoginAction(dealerId) {
     throw new Error(error.message || "Failed to load dealer login.");
   }
 
-  return data || null;
+  if (!data) return null;
+  // The encrypted copy never goes to the browser, only whether there is one.
+  const { password_encrypted: passwordEncrypted, ...account } = data;
+  return { ...account, has_password_copy: Boolean(passwordEncrypted) };
+}
+
+/**
+ * The dealer's current password, for PSB staff only. Null when no readable
+ * copy is stored (passwords set before copies were kept).
+ */
+export async function revealDealerPasswordAction(dealerId) {
+  await requireStaffSession();
+  if (!dealerId) return null;
+
+  const supabase = getSupabaseAdmin();
+  const { data, error } = await supabase
+    .from(DEALER_ACCOUNT_TABLE)
+    .select("password_encrypted")
+    .eq("dealer_id", dealerId)
+    .maybeSingle();
+
+  if (error && error.code !== "PGRST116") {
+    throw new Error(error.message || "Failed to load dealer password.");
+  }
+
+  return decryptDealerPassword(data?.password_encrypted);
 }
 
 export async function saveDealerLoginAction(dealerId, input = {}) {
@@ -347,7 +373,9 @@ export async function saveDealerLoginAction(dealerId, input = {}) {
     updated_at: now,
   };
   // Staff setting a new password is also how a locked login is released.
+  // The encrypted copy is what staff can view later.
   if (password) {
+    payload.password_encrypted = encryptDealerPassword(password);
     payload.failed_attempts = 0;
     payload.locked_until = null;
   }

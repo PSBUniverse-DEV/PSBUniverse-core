@@ -7,6 +7,7 @@ import {
   hashDealerPassword,
   verifyDealerPassword,
 } from "@/core/dealer/dealerAuth";
+import { encryptDealerPassword } from "@/core/dealer/dealerPasswordVault";
 import { assertFileAllowed, createSignedFileUpload, getSignedFileUrl } from "@/core/storage/files.service";
 import { loadDealerRecords } from "@/core/dealer/dealerRecordSources";
 import { DEALER_DOC_TYPES, DEALER_FILE_ACCEPT, DEALER_FILE_MAX_BYTES } from "./dealerPortal.data";
@@ -197,7 +198,13 @@ export async function changeDealerPasswordAction({ currentPassword, newPassword 
 
   const { error } = await context.supabase
     .from(DEALER_ACCOUNT_TABLE)
-    .update({ password_hash: passwordHash, failed_attempts: 0, locked_until: null, updated_at: new Date().toISOString() })
+    .update({
+      password_hash: passwordHash,
+      password_encrypted: encryptDealerPassword(newPassword),
+      failed_attempts: 0,
+      locked_until: null,
+      updated_at: new Date().toISOString(),
+    })
     .eq("account_id", context.account.account_id);
   if (error) {
     console.error("changeDealerPasswordAction:", error.message);
