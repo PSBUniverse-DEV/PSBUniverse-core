@@ -31,7 +31,30 @@ const STAFF_EDITABLE_FIELDS = {
 };
 
 const FIELD_MAX_LENGTH = 200;
+// PSB's internal remarks may be longer than the other profile fields.
+const FIELD_MAX_LENGTHS = { remarks: 2000 };
+// psb_s_dealermaster.credit_limit is numeric(14,2).
+const CREDIT_LIMIT_MAX = 999999999999.99;
 const SESSION_ENDED = "Your session has ended. Please sign in again.";
+
+// "Your PSB contact" comes from Company Setup (psb_s_company), found by its
+// unique short name. Change this to show another company's contact details.
+const PSB_CONTACT_SHORT_NAME = "PSB";
+
+/** PSB's name, email and phone for the portal, or null when the row is missing. */
+async function loadPsbContact(supabase) {
+  const { data, error } = await supabase
+    .from("psb_s_company")
+    .select("comp_name, comp_email, comp_phone")
+    .eq("short_name", PSB_CONTACT_SHORT_NAME)
+    .maybeSingle();
+  if (error) {
+    console.error("loadPsbContact:", error.message);
+    return null;
+  }
+  if (!data) return null;
+  return { name: data.comp_name || "", email: data.comp_email || "", phone: data.comp_phone || "" };
+}
 
 // ── Attachments (psb_m_dealerfile + private bucket dealer-files) ──
 const DEALER_FILE_TABLE = "psb_m_dealerfile";
@@ -40,7 +63,7 @@ const DEALER_FILE_ALLOWED_TYPES = DEALER_FILE_ACCEPT.split(",");
 const DEALER_FILE_LIMIT = 30;
 const DEALER_FILE_TEXT_MAX = 200;
 // storage_path is deliberately not selected for the browser.
-const DEALER_FILE_COLUMNS = "file_id, file_name, file_size, mime_type, doc_type, note, status_id, created_at";
+const DEALER_FILE_COLUMNS = "file_id, file_name, file_size, mime_type, doc_type, note, status_id, uploaded_by, created_at";
 // Review status comes from the shared workflow status table. A new upload
 // gets the status with this name; staff move it on from there.
 const DEALER_FILE_STATUS_TABLE = "wfk_s_status";
@@ -74,6 +97,7 @@ function toDealerFile(row, statusNames) {
     mime_type: row.mime_type,
     doc_type: row.doc_type,
     note: row.note,
+    uploaded_by_psb: row.uploaded_by === "psb",
     status_name: statusNames.get(String(row.status_id)) || DEALER_FILE_NEW_STATUS,
     created_text: row.created_at
       ? new Date(row.created_at).toLocaleDateString("en-US", { timeZone: "America/Chicago", dateStyle: "medium" })
@@ -141,6 +165,7 @@ export async function loadDealerAccountData() {
     lastLoginAt: context.account.last_login_at || null,
     files: await loadDealerFiles(context.supabase, context.dealer.dealer_id),
     projects: await loadDealerProjects(context.dealer.dealer_id),
+    psbContact: await loadPsbContact(context.supabase),
   };
 }
 
@@ -160,8 +185,9 @@ export async function updateDealerProfileAction(section, values) {
   const payload = {};
   for (const field of fields) {
     const text = String(values?.[field] ?? "").trim();
-    if (text.length > FIELD_MAX_LENGTH) {
-      return { success: false, error: `One of the fields is too long (maximum ${FIELD_MAX_LENGTH} characters).` };
+    const maxLength = FIELD_MAX_LENGTHS[field] || FIELD_MAX_LENGTH;
+    if (text.length > maxLength) {
+      return { success: false, error: `One of the fields is too long (maximum ${maxLength} characters).` };
     }
     payload[field] = text === "" ? null : text;
   }
@@ -173,6 +199,9 @@ export async function updateDealerProfileAction(section, values) {
     const amount = Number(payload.credit_limit);
     if (!Number.isFinite(amount) || amount < 0) {
       return { success: false, error: "Credit limit must be a number of 0 or more." };
+    }
+    if (amount > CREDIT_LIMIT_MAX) {
+      return { success: false, error: "Credit limit can be at most 999,999,999,999.99." };
     }
     payload.credit_limit = amount;
   }

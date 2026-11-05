@@ -52,7 +52,7 @@ function toDealerAccountError(error, fallback) {
 }
 
 // Dealer logins may only be read or set by staff with a dealer admin role.
-export async function loadDealerLoginAction(dealerId) {
+async function loadDealerLogin(dealerId) {
   await requireDealerAdmin();
   if (!dealerId) return null;
 
@@ -77,7 +77,7 @@ export async function loadDealerLoginAction(dealerId) {
  * The dealer's current password, for PSB staff only. Null when no readable
  * copy is stored (passwords set before copies were kept).
  */
-export async function revealDealerPasswordAction(dealerId) {
+async function revealDealerPassword(dealerId) {
   await requireDealerAdmin();
   if (!dealerId) return null;
 
@@ -95,7 +95,7 @@ export async function revealDealerPasswordAction(dealerId) {
   return decryptDealerPassword(data?.password_encrypted);
 }
 
-export async function saveDealerLoginAction(dealerId, input = {}) {
+async function saveDealerLogin(dealerId, input = {}) {
   await requireDealerAdmin();
   if (!dealerId) throw new Error("Dealer is required.");
 
@@ -198,7 +198,7 @@ async function findNextDealerCode(supabase) {
  * portal login together. The rest of the dealer's details are filled in
  * afterwards by logging in as the dealer.
  */
-export async function enrollDealerAction(input = {}) {
+async function enrollDealer(input = {}) {
   await requireDealerAdmin();
 
   const dealerName = normalizeText(input?.dealer_name);
@@ -257,7 +257,7 @@ export async function enrollDealerAction(input = {}) {
 }
 
 /** Switches a dealer on or off right away. */
-export async function setDealerActiveAction(dealerId, isActive) {
+async function setDealerActive(dealerId, isActive) {
   await requireDealerAdmin();
   if (!dealerId) throw new Error("Dealer is required.");
 
@@ -277,7 +277,7 @@ export async function setDealerActiveAction(dealerId, isActive) {
  * The database removes its login, file records and links with it; the
  * uploaded files are then removed from storage.
  */
-export async function deleteDealerAction(dealerId, typedCode) {
+async function deleteDealer(dealerId, typedCode) {
   await requireDealerAdmin();
   if (!dealerId) throw new Error("Dealer is required.");
 
@@ -305,4 +305,41 @@ export async function deleteDealerAction(dealerId, typedCode) {
     console.error("deleteDealerAction storage:", storageError?.message);
   }
   return { dealerId, deleted: true };
+}
+
+// ─── Actions called from the browser ───────────────────────
+// Next.js hides the text of errors thrown by server actions in production
+// builds, so these return { success: true, data } or { success: false, error }
+// and the page shows `error` as it is.
+
+async function toActionResult(work) {
+  try {
+    return { success: true, data: await work() };
+  } catch (error) {
+    return { success: false, error: error?.message || "Something went wrong. Please try again." };
+  }
+}
+
+export async function loadDealerLoginAction(dealerId) {
+  return toActionResult(() => loadDealerLogin(dealerId));
+}
+
+export async function revealDealerPasswordAction(dealerId) {
+  return toActionResult(() => revealDealerPassword(dealerId));
+}
+
+export async function saveDealerLoginAction(dealerId, input = {}) {
+  return toActionResult(() => saveDealerLogin(dealerId, input));
+}
+
+export async function enrollDealerAction(input = {}) {
+  return toActionResult(() => enrollDealer(input));
+}
+
+export async function setDealerActiveAction(dealerId, isActive) {
+  return toActionResult(() => setDealerActive(dealerId, isActive));
+}
+
+export async function deleteDealerAction(dealerId, typedCode) {
+  return toActionResult(() => deleteDealer(dealerId, typedCode));
 }

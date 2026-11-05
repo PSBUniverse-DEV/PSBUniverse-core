@@ -39,8 +39,9 @@ export default function DealerLoginModal({ dealer, onClose }) {
   useEffect(() => {
     let cancelled = false;
     loadDealerLoginAction(dealerId)
-      .then((result) => {
-        if (!cancelled) setAccount(result || null);
+      .then((response) => {
+        if (!response?.success) throw new Error(response?.error || "Failed to load dealer login.");
+        if (!cancelled) setAccount(response.data || null);
       })
       .catch((error) => {
         if (cancelled) return;
@@ -67,7 +68,9 @@ export default function DealerLoginModal({ dealer, onClose }) {
     }
     setIsRevealing(true);
     try {
-      const value = await revealDealerPasswordAction(dealerId);
+      const response = await revealDealerPasswordAction(dealerId);
+      if (!response?.success) throw new Error(response?.error || "Failed to load the password.");
+      const value = response.data;
       setCurrentPassword(value);
       if (!value) toastError(UNREADABLE_PASSWORD);
       return value;
@@ -104,9 +107,12 @@ export default function DealerLoginModal({ dealer, onClose }) {
     if (isSaving) return;
     setIsSaving(true);
     try {
-      const result = await saveDealerLoginAction(dealerId, { username, password, isActive });
+      const saveResponse = await saveDealerLoginAction(dealerId, { username, password, isActive });
+      if (!saveResponse?.success) throw new Error(saveResponse?.error || "Failed to save dealer login.");
+      const result = saveResponse.data;
       // The save already went through. If the refresh fails, show what was saved.
-      const refreshed = await loadDealerLoginAction(dealerId).catch(() => null);
+      const refreshResponse = await loadDealerLoginAction(dealerId).catch(() => null);
+      const refreshed = refreshResponse?.success ? refreshResponse.data : null;
       setAccount(refreshed || { ...result, has_password_copy: Boolean(password) || Boolean(account?.has_password_copy) });
       // A password typed here is the current one now, so Show needs no server call.
       if (password) setCurrentPassword(password);

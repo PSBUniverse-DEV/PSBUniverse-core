@@ -36,7 +36,7 @@ export const STAFF_COMPANY_FIELDS = [
     if (field.key === "credit_limit") return { ...field, readOnly: false, type: "number", hint: "PSB only", placeholder: "0.00" };
     return field;
   }),
-  { key: "remarks", label: "Internal remarks", hint: "PSB only, never shown to the dealer" },
+  { key: "remarks", label: "Internal remarks", hint: "PSB only, never shown to the dealer", maxLength: 2000 },
 ];
 
 // Paperwork PSB collects from a dealer. `required` ones appear on the

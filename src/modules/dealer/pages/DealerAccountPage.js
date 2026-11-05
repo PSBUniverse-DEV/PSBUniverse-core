@@ -48,6 +48,7 @@ export default async function DealerAccountPage() {
       lockMinutes={DEALER_LOCK_MINUTES}
       files={data.files}
       projects={data.projects}
+      psbContact={data.psbContact}
     />
   );
 }

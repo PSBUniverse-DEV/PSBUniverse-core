@@ -189,7 +189,7 @@ export default function DealerAttachments({ initialFiles }) {
                       {file.file_name}
                     </button>
                     <div className="dp-file-meta">
-                      {[typeLabel(file.doc_type), formatFileSize(file.file_size), file.created_text ? `uploaded ${file.created_text}` : "", file.note || ""].filter(Boolean).join(" · ")}
+                      {[typeLabel(file.doc_type), formatFileSize(file.file_size), file.created_text ? `uploaded ${file.created_text}` : "", file.uploaded_by_psb ? "added by PSB" : "", file.note || ""].filter(Boolean).join(" · ")}
                     </div>
                   </div>
                 </div>

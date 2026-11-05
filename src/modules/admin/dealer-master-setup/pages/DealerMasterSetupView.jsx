@@ -73,7 +73,9 @@ export function useDealerMasterSetup({ dealers = [] }) {
     if (isMutatingAction) return;
     setIsMutatingAction(true);
     try {
-      const result = await work();
+      const response = await work();
+      if (!response?.success) throw new Error(response?.error || "Failed to save the change.");
+      const result = response.data;
       applyResult?.(result);
       setDialog(EMPTY_DIALOG);
       toastSuccess(typeof successMessage === "function" ? successMessage(result) : successMessage, "Dealer Master");

@@ -53,7 +53,7 @@ export default function DealerProfileForm({ section, title, fields, initialValue
                 readOnly={Boolean(field.readOnly)}
                 required={Boolean(field.required)}
                 placeholder={field.placeholder || ""}
-                maxLength={200}
+                maxLength={field.maxLength || 200}
                 onChange={(event) => setValues((prev) => ({ ...prev, [field.key]: event.target.value }))}
               />
               {field.hint ? <span className="dp-hint">{field.hint}</span> : null}
