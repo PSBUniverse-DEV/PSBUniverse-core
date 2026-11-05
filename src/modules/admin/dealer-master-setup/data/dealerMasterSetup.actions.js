@@ -18,9 +18,15 @@ function normalizeText(value) {
   return String(value ?? "").trim();
 }
 
+// An error the user can fix themselves: shown as a short message. Any other
+// error is unexpected and opens the error window with details for support.
+function expectedError(message) {
+  return Object.assign(new Error(message), { expected: true });
+}
+
 function toDealerError(error, fallback) {
   // 23505 = unique violation (psb_s_dealermaster_dealer_code_key)
-  if (error?.code === "23505") return new Error("Dealer code already exists.");
+  if (error?.code === "23505") return expectedError("Dealer code already exists.");
   return new Error(error?.message || fallback);
 }
 
@@ -47,7 +53,7 @@ export async function loadDealerMasterSetupData() {
 }
 
 function toDealerAccountError(error, fallback) {
-  if (error?.code === "23505") return new Error("That username is already in use.");
+  if (error?.code === "23505") return expectedError("That username is already in use.");
   return new Error(error?.message || fallback);
 }
 
@@ -116,7 +122,7 @@ async function saveDealerLogin(dealerId, input = {}) {
 
   const nextPasswordHash = password ? await hashDealerPassword(password) : existing?.password_hash;
   if (!nextPasswordHash) {
-    throw new Error("Password is required.");
+    throw expectedError("Password is required.");
   }
 
   const now = new Date().toISOString();
@@ -204,9 +210,9 @@ async function enrollDealer(input = {}) {
   const dealerName = normalizeText(input?.dealer_name);
   const email = normalizeText(input?.email);
   const phone = normalizeText(input?.phone);
-  if (!dealerName) throw new Error("Dealer name is required.");
-  if (!EMAIL_PATTERN.test(email)) throw new Error("Please enter a valid email address.");
-  if (!phone) throw new Error("Phone is required.");
+  if (!dealerName) throw expectedError("Dealer name is required.");
+  if (!EMAIL_PATTERN.test(email)) throw expectedError("Please enter a valid email address.");
+  if (!phone) throw expectedError("Phone is required.");
   const username = normalizeDealerUsername(input?.username);
   const password = typeof input?.password === "string" ? input.password : "";
   const passwordHash = await hashDealerPassword(password);
@@ -220,7 +226,7 @@ async function enrollDealer(input = {}) {
   if (usernameError && usernameError.code !== "PGRST116") {
     throw new Error(usernameError.message || "Failed to check the username.");
   }
-  if (takenAccount) throw new Error("That username is already in use.");
+  if (takenAccount) throw expectedError("That username is already in use.");
 
   // Two admins enrolling at once can pick the same code: the unique key on
   // dealer_code refuses the second insert, which then tries the next code.
@@ -288,9 +294,9 @@ async function deleteDealer(dealerId, typedCode) {
     .eq("dealer_id", dealerId)
     .maybeSingle();
   if (loadError && loadError.code !== "PGRST116") throw new Error(loadError.message || "Failed to load the dealer.");
-  if (!dealer) throw new Error("That dealer no longer exists.");
+  if (!dealer) throw expectedError("That dealer no longer exists.");
   if (normalizeText(typedCode).toUpperCase() !== normalizeText(dealer.dealer_code).toUpperCase()) {
-    throw new Error("The dealer code you typed does not match.");
+    throw expectedError("The dealer code you typed does not match.");
   }
 
   const { data: files } = await supabase.from(DEALER_FILE_TABLE).select("storage_path").eq("dealer_id", dealerId);
@@ -302,7 +308,7 @@ async function deleteDealer(dealerId, typedCode) {
   try {
     await removeStoredFiles({ bucket: DEALER_FILE_BUCKET, storagePaths: (files || []).map((file) => file.storage_path) });
   } catch (storageError) {
-    console.error("deleteDealerAction storage:", storageError?.message);
+    console.error("deleteDealer storage:", storageError?.message);
   }
   return { dealerId, deleted: true };
 }
@@ -316,7 +322,11 @@ async function toActionResult(work) {
   try {
     return { success: true, data: await work() };
   } catch (error) {
-    return { success: false, error: error?.message || "Something went wrong. Please try again." };
+    return {
+      success: false,
+      error: error?.message || "Something went wrong. Please try again.",
+      unexpected: !error?.expected,
+    };
   }
 }
 

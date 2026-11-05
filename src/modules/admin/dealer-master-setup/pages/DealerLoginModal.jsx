@@ -8,6 +8,7 @@ import {
   saveDealerLoginAction,
 } from "../data/dealerMasterSetup.actions.js";
 import { generateDealerPassword } from "../data/dealerMasterSetup.data.js";
+import { errorFromResult, showDealerError } from "@/modules/dealer/data/dealerErrorReport";
 
 const HIDDEN_PASSWORD = "••••••••••••";
 const UNREADABLE_PASSWORD = "This password can't be shown. Use Update credentials to set a new one.";
@@ -40,12 +41,12 @@ export default function DealerLoginModal({ dealer, onClose }) {
     let cancelled = false;
     loadDealerLoginAction(dealerId)
       .then((response) => {
-        if (!response?.success) throw new Error(response?.error || "Failed to load dealer login.");
+        if (!response?.success) throw errorFromResult(response, "Failed to load dealer login.");
         if (!cancelled) setAccount(response.data || null);
       })
       .catch((error) => {
         if (cancelled) return;
-        toastError(error?.message || "Failed to load dealer login.");
+        showDealerError(error, { title: "Dealer Login", action: "Opening the dealer's login details" });
         onClose?.();
       })
       .finally(() => { if (!cancelled) setIsLoading(false); });
@@ -69,13 +70,13 @@ export default function DealerLoginModal({ dealer, onClose }) {
     setIsRevealing(true);
     try {
       const response = await revealDealerPasswordAction(dealerId);
-      if (!response?.success) throw new Error(response?.error || "Failed to load the password.");
+      if (!response?.success) throw errorFromResult(response, "Failed to load the password.");
       const value = response.data;
       setCurrentPassword(value);
       if (!value) toastError(UNREADABLE_PASSWORD);
       return value;
     } catch (error) {
-      toastError(error?.message || "Failed to load the password.");
+      showDealerError(error, { title: "Dealer Login", action: "Showing the dealer's password" });
       return null;
     } finally { setIsRevealing(false); }
   }, [currentPassword, dealerId]);
@@ -108,7 +109,7 @@ export default function DealerLoginModal({ dealer, onClose }) {
     setIsSaving(true);
     try {
       const saveResponse = await saveDealerLoginAction(dealerId, { username, password, isActive });
-      if (!saveResponse?.success) throw new Error(saveResponse?.error || "Failed to save dealer login.");
+      if (!saveResponse?.success) throw errorFromResult(saveResponse, "Failed to save dealer login.");
       const result = saveResponse.data;
       // The save already went through. If the refresh fails, show what was saved.
       const refreshResponse = await loadDealerLoginAction(dealerId).catch(() => null);
@@ -120,7 +121,7 @@ export default function DealerLoginModal({ dealer, onClose }) {
       setIsEditing(false);
       toastSuccess(result?.created ? "Dealer login created." : "Dealer login updated.", "Dealer Login");
     } catch (error) {
-      toastError(error?.message || "Failed to save dealer login.");
+      showDealerError(error, { title: "Dealer Login", action: "Saving the dealer's login" });
     } finally { setIsSaving(false); }
   }, [account, dealerId, isActive, isSaving, password, username]);
 

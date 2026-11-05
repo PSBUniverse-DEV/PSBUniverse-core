@@ -81,7 +81,7 @@ export default function DealerAccountWorkspace({
   }), [dealer]);
 
   return (
-    <DealerShell dealer={dealer} username={username} staff={staff} active={section} onSelect={selectSection}>
+    <DealerShell dealer={dealer} username={username} staff={staff} supportEmail={psbContact?.email || ""} active={section} onSelect={selectSection}>
       <div hidden={section !== "overview"}>
         <DealerAccountView
           dealer={dealer}

@@ -61,6 +61,6 @@ export async function POST(request) {
     return json({ success: true }, 200, [["Set-Cookie", buildDealerSessionCookie(token, { secure })]]);
   } catch (error) {
     console.error("Dealer login-as error:", error);
-    return json({ success: false, error: "Unable to log in as this dealer right now." }, 500);
+    return json({ success: false, error: "Unable to log in as this dealer right now.", unexpected: true }, 500);
   }
 }

@@ -11,6 +11,7 @@ import { encryptDealerPassword } from "@/core/dealer/dealerPasswordVault";
 import { userHasDealerAdminRole } from "@/modules/admin/dealer-master-setup/data/dealerAdminAccess.js";
 import { assertFileAllowed, createSignedFileUpload, getSignedFileUrl } from "@/core/storage/files.service";
 import { loadDealerRecords } from "@/core/dealer/dealerRecordSources";
+import { loadPsbContact } from "./psbContact";
 import { DEALER_DOC_TYPES, DEALER_FILE_ACCEPT, DEALER_FILE_MAX_BYTES } from "./dealerPortal.data";
 
 const DEALER_TABLE = "psb_s_dealermaster";
@@ -36,25 +37,6 @@ const FIELD_MAX_LENGTHS = { remarks: 2000 };
 // psb_s_dealermaster.credit_limit is numeric(14,2).
 const CREDIT_LIMIT_MAX = 999999999999.99;
 const SESSION_ENDED = "Your session has ended. Please sign in again.";
-
-// "Your PSB contact" comes from Company Setup (psb_s_company), found by its
-// unique short name. Change this to show another company's contact details.
-const PSB_CONTACT_SHORT_NAME = "PSB";
-
-/** PSB's name, email and phone for the portal, or null when the row is missing. */
-async function loadPsbContact(supabase) {
-  const { data, error } = await supabase
-    .from("psb_s_company")
-    .select("comp_name, comp_email, comp_phone")
-    .eq("short_name", PSB_CONTACT_SHORT_NAME)
-    .maybeSingle();
-  if (error) {
-    console.error("loadPsbContact:", error.message);
-    return null;
-  }
-  if (!data) return null;
-  return { name: data.comp_name || "", email: data.comp_email || "", phone: data.comp_phone || "" };
-}
 
 // ── Attachments (psb_m_dealerfile + private bucket dealer-files) ──
 const DEALER_FILE_TABLE = "psb_m_dealerfile";
@@ -165,7 +147,7 @@ export async function loadDealerAccountData() {
     lastLoginAt: context.account.last_login_at || null,
     files: await loadDealerFiles(context.supabase, context.dealer.dealer_id),
     projects: await loadDealerProjects(context.dealer.dealer_id),
-    psbContact: await loadPsbContact(context.supabase),
+    psbContact: await loadPsbContact(),
   };
 }
 
@@ -220,7 +202,7 @@ export async function updateDealerProfileAction(section, values) {
     .eq("dealer_id", context.dealer.dealer_id);
   if (error) {
     console.error("updateDealerProfileAction:", error.message);
-    return { success: false, error: "Unable to save your changes. Please try again." };
+    return { success: false, error: "Unable to save your changes. Please try again.", unexpected: true };
   }
   return { success: true };
 }
@@ -259,7 +241,7 @@ export async function changeDealerPasswordAction({ currentPassword, newPassword 
     .eq("account_id", context.account.account_id);
   if (error) {
     console.error("changeDealerPasswordAction:", error.message);
-    return { success: false, error: "Unable to update your password. Please try again." };
+    return { success: false, error: "Unable to update your password. Please try again.", unexpected: true };
   }
   return { success: true };
 }
@@ -280,7 +262,7 @@ export async function createDealerFileUploadAction({ name, type, size, docType }
     .eq("dealer_id", dealerId);
   if (countError) {
     console.error("createDealerFileUploadAction count:", countError.message);
-    return { success: false, error: "Unable to start the upload. Please try again." };
+    return { success: false, error: "Unable to start the upload. Please try again.", unexpected: true };
   }
   if ((count || 0) >= DEALER_FILE_LIMIT) {
     return { success: false, error: `You have reached the limit of ${DEALER_FILE_LIMIT} files. Contact PSB to remove old ones.` };
@@ -328,7 +310,7 @@ export async function saveDealerFileAction({ storagePath, name, type, size, docT
   );
   if (!newStatus) {
     console.error(`saveDealerFileAction: no "${DEALER_FILE_NEW_STATUS}" row in ${DEALER_FILE_STATUS_TABLE}`);
-    return { success: false, error: "The file uploaded but could not be saved. Please contact PSB." };
+    return { success: false, error: "The file uploaded but could not be saved. Please contact PSB.", unexpected: true };
   }
 
   const cleanNote = String(note ?? "").trim().slice(0, DEALER_FILE_TEXT_MAX);
@@ -349,7 +331,7 @@ export async function saveDealerFileAction({ storagePath, name, type, size, docT
     .single();
   if (error) {
     console.error("saveDealerFileAction:", error.message);
-    return { success: false, error: "The file uploaded but could not be saved. Please try again." };
+    return { success: false, error: "The file uploaded but could not be saved. Please try again.", unexpected: true };
   }
   return { success: true, file: toDealerFile(data, statusNames) };
 }
@@ -372,7 +354,7 @@ export async function getDealerFileUrlAction(fileId) {
     return { success: true, url };
   } catch (urlError) {
     console.error("getDealerFileUrlAction:", urlError?.message);
-    return { success: false, error: "Could not open the file. Please try again." };
+    return { success: false, error: "Could not open the file. Please try again.", unexpected: true };
   }
 }
 

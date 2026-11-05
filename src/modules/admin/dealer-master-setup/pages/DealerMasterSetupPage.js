@@ -1,6 +1,7 @@
 import { loadDealerMasterSetupData } from "../data/dealerMasterSetup.actions.js";
 import { DEALER_ADMIN_NO_ACCESS, getDealerAdminSession } from "../data/dealerAdminAccess.js";
 import DealerMasterSetupView from "./DealerMasterSetupView.jsx";
+import { loadPsbContact } from "@/modules/dealer/data/psbContact";
 
 /**
  * Server page for Dealer Master Setup.
@@ -19,6 +20,6 @@ export default async function DealerMasterSetupPage() {
     );
   }
 
-  const { dealers } = await loadDealerMasterSetupData();
-  return <DealerMasterSetupView dealers={dealers} />;
+  const [{ dealers }, psbContact] = await Promise.all([loadDealerMasterSetupData(), loadPsbContact()]);
+  return <DealerMasterSetupView dealers={dealers} supportEmail={psbContact?.email || ""} />;
 }

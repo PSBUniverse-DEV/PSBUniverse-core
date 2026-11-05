@@ -4,6 +4,7 @@ import { useState } from "react";
 import Image from "next/image";
 import dealerIcon from "@/styles/psb_dealer_icon.svg";
 import "../dealerPortal.css";
+import DealerErrorHost from "./DealerErrorHost";
 
 const ACCOUNT_NAV = [
   { key: "overview", label: "Overview" },
@@ -22,7 +23,7 @@ const LATER_NAV = ["Quotes", "Invoices", "Documents"];
  * bar. `active` is the current section key and `onSelect(key)` switches
  * section; nothing here navigates to another page except Logout.
  */
-export default function DealerShell({ dealer, username, staff = null, active, onSelect, children }) {
+export default function DealerShell({ dealer, username, staff = null, supportEmail = "", active, onSelect, children }) {
   const [signingOut, setSigningOut] = useState(false);
 
   async function handleLogout() {
@@ -40,6 +41,7 @@ export default function DealerShell({ dealer, username, staff = null, active, on
 
   return (
     <div className="dp-app dp-layout">
+      <DealerErrorHost supportEmail={supportEmail} />
       <aside className="dp-sidebar">
         <div className="dp-brand">
           <Image src={dealerIcon} alt="" className="dp-logo" />

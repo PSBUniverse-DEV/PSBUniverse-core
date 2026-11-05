@@ -2,8 +2,9 @@
 
 import { useState } from "react";
 import { useRouter } from "next/navigation";
-import { toastError, toastSuccess } from "@/shared/components/ui";
+import { toastSuccess } from "@/shared/components/ui";
 import { updateDealerProfileAction } from "../data/dealerPortal.actions";
+import { errorFromResult, showDealerError } from "../data/dealerErrorReport";
 
 /**
  * One editable profile panel. `fields` is a list of
@@ -26,13 +27,13 @@ export default function DealerProfileForm({ section, title, fields, initialValue
       const payload = Object.fromEntries(editable.map((field) => [field.key, values[field.key] ?? ""]));
       const result = await updateDealerProfileAction(section, payload);
       if (!result?.success) {
-        toastError(result?.error || "Unable to save your changes.", title);
+        showDealerError(errorFromResult(result, "Unable to save your changes."), { title, action: `Saving ${title}` });
         return;
       }
       toastSuccess("Your changes have been saved.", title);
       router.refresh();
     } catch {
-      toastError("Unable to save your changes. Please try again.", title);
+      showDealerError(new Error("Unable to save your changes. Please try again."), { title, action: `Saving ${title}` });
     } finally {
       setSaving(false);
     }

@@ -4,6 +4,8 @@ import { useCallback, useMemo, useState } from "react";
 import { Button, Card, Input, Modal, StatusBadge, TableZ, toastError, toastSuccess } from "@/shared/components/ui";
 import { deleteDealerAction, enrollDealerAction, setDealerActiveAction } from "../data/dealerMasterSetup.actions.js";
 import DealerLoginModal from "./DealerLoginModal.jsx";
+import DealerErrorHost from "@/modules/dealer/components/DealerErrorHost";
+import { errorFromResult, showDealerError } from "@/modules/dealer/data/dealerErrorReport";
 import {
   EMPTY_DIALOG,
   compareText,
@@ -74,13 +76,13 @@ export function useDealerMasterSetup({ dealers = [] }) {
     setIsMutatingAction(true);
     try {
       const response = await work();
-      if (!response?.success) throw new Error(response?.error || "Failed to save the change.");
+      if (!response?.success) throw errorFromResult(response, "Failed to save the change.");
       const result = response.data;
       applyResult?.(result);
       setDialog(EMPTY_DIALOG);
       toastSuccess(typeof successMessage === "function" ? successMessage(result) : successMessage, "Dealer Master");
     } catch (error) {
-      toastError(error?.message || "Failed to save the change.");
+      showDealerError(error, { title: "Dealer Master", action: "Saving a change in Dealer Master Setup" });
     } finally {
       setIsMutatingAction(false);
     }
@@ -138,10 +140,10 @@ export function useDealerMasterSetup({ dealers = [] }) {
         body: JSON.stringify({ dealerId: row.dealer_id }),
       });
       const result = await response.json().catch(() => ({}));
-      if (!response.ok || !result?.success) throw new Error(result?.error || "Unable to log in as this dealer.");
+      if (!response.ok || !result?.success) throw errorFromResult(result, "Unable to log in as this dealer.");
       window.location.assign("/dealer/account");
     } catch (error) {
-      toastError(error?.message || "Unable to log in as this dealer.");
+      showDealerError(error, { title: "Login as dealer", action: `Logging in as dealer ${row.dealer_code || ""}` });
       setIsMutatingAction(false);
     }
   }, [isMutatingAction]);
@@ -315,7 +317,7 @@ function DealerDialog({ dialog, enrollDraft, setEnrollDraft, deleteConfirmText, 
  * Dealer Master Setup page body: header, dealer table, the shared dialog and
  * the login credentials modal. All behaviour lives in `useDealerMasterSetup`.
  */
-export default function DealerMasterSetupView({ dealers }) {
+export default function DealerMasterSetupView({ dealers, supportEmail = "" }) {
   const hook = useDealerMasterSetup({ dealers });
   const [loginDealer, setLoginDealer] = useState(null);
   const closeDealerLogin = useCallback(() => setLoginDealer(null), []);
@@ -343,6 +345,7 @@ export default function DealerMasterSetupView({ dealers }) {
         submitToggleDealer={hook.submitToggleDealer}
         submitDeleteDealer={hook.submitDeleteDealer}
       />
+      <DealerErrorHost supportEmail={supportEmail} />
       {loginDealer ? (
         <DealerLoginModal key={String(loginDealer.dealer_id)} dealer={loginDealer} onClose={closeDealerLogin} />
       ) : null}

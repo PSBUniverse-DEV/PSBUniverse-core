@@ -57,6 +57,6 @@ export const getDealerAdminSession = cache(async () => {
 /** Same as getDealerAdminSession, but throws for anyone who may not manage dealers. */
 export async function requireDealerAdmin() {
   const session = await getDealerAdminSession();
-  if (!session) throw new Error(DEALER_ADMIN_NO_ACCESS);
+  if (!session) throw Object.assign(new Error(DEALER_ADMIN_NO_ACCESS), { expected: true });
   return session;
 }

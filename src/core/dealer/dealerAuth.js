@@ -33,7 +33,8 @@ function getDealerSecretKey() {
 export function normalizeDealerUsername(value) {
   const username = String(value ?? "").trim().toLowerCase();
   if (!/^[a-z0-9._-]{3,50}$/.test(username)) {
-    throw new Error("Username must be 3–50 characters: letters, numbers, dot, dash or underscore.");
+    // `expected`: the user can fix this, so it is shown as a short message, not an error report.
+    throw Object.assign(new Error("Username must be 3–50 characters: letters, numbers, dot, dash or underscore."), { expected: true });
   }
   return username;
 }
@@ -41,10 +42,10 @@ export function normalizeDealerUsername(value) {
 export function validateDealerPassword(value) {
   const password = String(value ?? "");
   if (password.length < PASSWORD_MIN_LENGTH) {
-    throw new Error(`Password must be at least ${PASSWORD_MIN_LENGTH} characters.`);
+    throw Object.assign(new Error(`Password must be at least ${PASSWORD_MIN_LENGTH} characters.`), { expected: true });
   }
   if (password.length > PASSWORD_MAX_LENGTH) {
-    throw new Error(`Password must be at most ${PASSWORD_MAX_LENGTH} characters.`);
+    throw Object.assign(new Error(`Password must be at most ${PASSWORD_MAX_LENGTH} characters.`), { expected: true });
   }
   return password;
 }
