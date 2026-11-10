@@ -749,7 +749,7 @@ export async function loadUserSeatsAction(userId) {
     const [seatsRes, positionsRes, companiesRes, departmentsRes] = await Promise.all([
       supabase.from("psb_m_userposition").select("position_id, is_primary").eq("user_id", uid).eq("is_active", true),
       supabase.from("psb_s_position").select("position_id, comp_id, dept_id, position_name, branch, is_active"),
-      supabase.from("psb_s_company").select("comp_id, comp_name, comp_short_name, is_active"),
+      supabase.from("psb_s_company").select("comp_id, comp_name, short_name, is_active"),
       supabase.from("psb_s_department").select("dept_id, dept_name, is_active"),
     ]);
     const failed = seatsRes.error || positionsRes.error || companiesRes.error || departmentsRes.error;
@@ -764,7 +764,7 @@ export async function loadUserSeatsAction(userId) {
       return {
         position_id: p.position_id,
         position_name: p.position_name || "",
-        company_label: company?.comp_short_name || company?.comp_name || "",
+        company_label: company?.short_name || company?.comp_name || "",
         department_name: dept?.dept_name || "",
         branch: p.branch || "",
         // Open = the position, its company and its department (if any) are all active.

@@ -15,7 +15,7 @@ function displayName(user) {
 export async function loadOrgChartData() {
   const supabase = getSupabaseAdmin();
   const [companiesRes, departmentsRes, positionsRes, reportsRes, seatsRes, usersRes] = await Promise.all([
-    supabase.from("psb_s_company").select("comp_id, comp_name, comp_short_name").eq("is_active", true)
+    supabase.from("psb_s_company").select("comp_id, comp_name, short_name").eq("is_active", true)
       .order("comp_name", { ascending: true }),
     supabase.from("psb_s_department").select("dept_id, comp_id, dept_name").eq("is_active", true),
     supabase.from("psb_s_position").select("position_id, comp_id, dept_id, position_name, branch, chart_level, display_order")
@@ -33,7 +33,7 @@ export async function loadOrgChartData() {
 
   const companies = (companiesRes.data || []).map((c) => ({
     comp_id: c.comp_id,
-    label: c.comp_short_name ? `${c.comp_name} (${c.comp_short_name})` : c.comp_name,
+    label: c.short_name ? `${c.comp_name} (${c.short_name})` : c.comp_name,
   }));
   const companyIds = new Set(companies.map((c) => String(c.comp_id)));
   const deptById = new Map((departmentsRes.data || []).map((d) => [String(d.dept_id), d]));

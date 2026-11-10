@@ -660,6 +660,7 @@ function CompanyDeptHeader({
           disabled={!hasPendingChanges || isSaving || isMutatingAction} onClick={handleCancelBatch}>Cancel Batch</Button>
         <Button type="button" size="sm" variant="success"
           disabled={isSaving || isMutatingAction} onClick={openAddCompanyDialog}>+ Add Company</Button>
+        <a href="/admin/org-chart" className="btn btn-sm btn-outline-primary">Org Chart</a>
       </div>
     </div>
   );
