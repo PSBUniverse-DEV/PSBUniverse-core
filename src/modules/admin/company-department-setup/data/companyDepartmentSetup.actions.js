@@ -307,6 +307,8 @@ export async function loadOrgPositionsData() {
 
   const positions = (positionsRes.data || []).map((p) => ({
     ...p,
+    // Rows saved before "All" was blocked: "All" / "All branches" means every branch.
+    branch: /^all( branches)?$/i.test(String(p.branch || "").trim()) ? null : p.branch,
     reports_to_ids: (reportsRes.data || [])
       .filter((r) => String(r.position_id) === String(p.position_id))
       .map((r) => r.reports_to_position_id),
@@ -332,7 +334,9 @@ async function saveOrgPosition(input) {
   const compId = toIdOrNull(input?.comp_id);
   const deptId = toIdOrNull(input?.dept_id);
   const name = normalizeText(input?.position_name);
-  const branch = normalizeText(input?.branch) || null;
+  // Blank, "All" or "All branches" all mean every branch.
+  const branchText = normalizeText(input?.branch);
+  const branch = !branchText || /^all( branches)?$/i.test(branchText) ? null : branchText;
   const chartLevel = Math.min(Math.max(toIdOrNull(input?.chart_level) ?? 4, 1), 9);
   const reportsToIds = [...new Set((input?.reports_to_ids || []).map(toIdOrNull).filter((id) => id != null))];
   const userIds = [...new Set((input?.user_ids || []).map(toIdOrNull).filter((id) => id != null))];
@@ -382,6 +386,19 @@ async function saveOrgPosition(input) {
 
   const now = new Date().toISOString();
   const fields = { comp_id: compId, dept_id: deptId, position_name: name, branch, chart_level: chartLevel };
+  // Order inside its group (same company, department and rank): a new position,
+  // or one moved to another department or rank, goes to the end of that group.
+  let previous = null;
+  if (positionId) {
+    const { data: prevRow, error: prevError } = await supabase.from("psb_s_position")
+      .select("dept_id, chart_level").eq("position_id", positionId).maybeSingle();
+    if (prevError) throw new Error(prevError.message);
+    previous = prevRow;
+  }
+  const groupChanged = !previous
+    || String(previous.dept_id ?? "") !== String(deptId ?? "")
+    || Number(previous.chart_level) !== chartLevel;
+  if (groupChanged) fields.display_order = (await maxOrderInGroup(supabase, compId, deptId, chartLevel, positionId)) + 1;
   let savedId = positionId;
   if (positionId) {
     const { data, error } = await supabase.from("psb_s_position").update({ ...fields, updated_at: now })
@@ -481,5 +498,72 @@ export async function setOrgPositionActiveAction(positionId, isActive) {
 
 export async function deleteOrgPositionAction(positionId) {
   return toPositionResult(() => deleteOrgPosition(positionId), "Failed to delete the position.");
+}
+
+// ─── Position order inside a group ─────────────────────────
+// Group = same company, same department (or company-level) and same rank.
+
+function orderValue(row) {
+  const n = Number(row?.display_order);
+  return row?.display_order == null || !Number.isFinite(n) ? Number.MAX_SAFE_INTEGER : n;
+}
+
+async function positionsInGroup(supabase, compId, deptId, chartLevel) {
+  let query = supabase.from("psb_s_position").select("position_id, display_order, position_name")
+    .eq("comp_id", compId).eq("chart_level", chartLevel);
+  query = deptId == null ? query.is("dept_id", null) : query.eq("dept_id", deptId);
+  const { data, error } = await query;
+  if (error) throw new Error(error.message);
+  // Same order the screens use: display_order (empty last), then name.
+  return (data || []).sort((a, b) => orderValue(a) - orderValue(b)
+    || String(a.position_name || "").localeCompare(String(b.position_name || "")));
+}
+
+// Highest order number in a group. If any position there has no number yet
+// (they sort last), the group is numbered 1..n first so a new one lands at the end.
+async function maxOrderInGroup(supabase, compId, deptId, chartLevel, excludeId) {
+  const rows = (await positionsInGroup(supabase, compId, deptId, chartLevel))
+    .filter((r) => String(r.position_id) !== String(excludeId ?? ""));
+  if (rows.some((r) => r.display_order == null)) {
+    for (let i = 0; i < rows.length; i += 1) {
+      if (Number(rows[i].display_order) === i + 1) continue;
+      const { error } = await supabase.from("psb_s_position")
+        .update({ display_order: i + 1 }).eq("position_id", rows[i].position_id);
+      if (error) throw new Error(error.message || "Failed to set the order.");
+    }
+    return rows.length;
+  }
+  return rows.reduce((max, r) => Math.max(max, Number(r.display_order) || 0), 0);
+}
+
+/** Move a position one place up (-1) or down (+1) inside its group; the group is renumbered 1..n. */
+async function moveOrgPosition(positionId, direction) {
+  const id = toIdOrNull(positionId);
+  if (!id) throw new Error("Position is required.");
+  const step = Number(direction) < 0 ? -1 : 1;
+  const supabase = getSupabaseAdmin();
+  const { data: row, error } = await supabase.from("psb_s_position")
+    .select("position_id, comp_id, dept_id, chart_level").eq("position_id", id).maybeSingle();
+  if (error) throw new Error(error.message);
+  if (!row) throw new Error("This position no longer exists. Refresh the page.");
+
+  const group = await positionsInGroup(supabase, row.comp_id, row.dept_id, row.chart_level);
+  const index = group.findIndex((p) => String(p.position_id) === String(id));
+  const target = index + step;
+  if (index < 0 || target < 0 || target >= group.length) return { success: true };
+
+  const ordered = [...group];
+  [ordered[index], ordered[target]] = [ordered[target], ordered[index]];
+  for (let i = 0; i < ordered.length; i += 1) {
+    if (Number(ordered[i].display_order) === i + 1) continue;
+    const { error: updateError } = await supabase.from("psb_s_position")
+      .update({ display_order: i + 1 }).eq("position_id", ordered[i].position_id);
+    if (updateError) throw new Error(updateError.message || "Failed to change the order.");
+  }
+  return { success: true };
+}
+
+export async function moveOrgPositionAction(positionId, direction) {
+  return toPositionResult(() => moveOrgPosition(positionId, direction), "Failed to change the order.");
 }
 

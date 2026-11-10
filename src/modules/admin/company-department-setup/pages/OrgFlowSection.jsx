@@ -97,7 +97,7 @@ export default function OrgFlowSection({
   openDeactivateDepartmentDialog, stageHardDeleteDepartment, unstageHardDeleteDepartment,
   allPositions = [], companyPositions = [], isPositionBusy = false,
   selectedDeptKey, onSelectDept, selectedPositionId, onSelectPosition,
-  onAddPosition, onEditPosition, onTogglePosition, onDeletePosition, onRemovePerson,
+  onAddPosition, onEditPosition, onTogglePosition, onDeletePosition, onRemovePerson, onMovePosition,
 }) {
   const [deptSearch, setDeptSearch] = useState("");
   const [confirmBox, setConfirmBox] = useState(null);
@@ -135,6 +135,17 @@ export default function OrgFlowSection({
   const deptSaved = isCompanyLevel || (deptRow && !isTempDepartmentId(deptRow.dept_id));
 
   const deptPositions = selectedDeptKey ? companyPositions.filter((p) => deptKeyOf(p) === selectedDeptKey) : [];
+  // Positions arrive sorted by rank, then order, so groups come out top rank first.
+  const deptPositionGroups = [];
+  deptPositions.forEach((p) => {
+    const level = String(p.chart_level ?? "");
+    let group = deptPositionGroups.find((g) => g.level === level);
+    if (!group) {
+      group = { level, label: levelLabel(p.chart_level).replace(/^\d+\s*·\s*/, "") || "No rank", items: [] };
+      deptPositionGroups.push(group);
+    }
+    group.items.push(p);
+  });
   const selectedPosition = deptPositions.find((p) => isSameId(p.position_id, selectedPositionId)) || null;
   const peopleOf = (p) => (p?.holders || []).map((h) => h.full_name).join(", ");
   const labelOf = (p) => positionLabel(p, deptNameById);
@@ -272,22 +283,35 @@ export default function OrgFlowSection({
             : !companySaved ? <Hint>Press Save Batch first, then add positions to this company.</Hint>
             : !deptSaved ? <Hint>Press Save Batch first, then add positions to this department.</Hint>
             : deptPositions.length === 0 ? <Hint>No positions here yet. Add the first one.</Hint>
-            : deptPositions.map((p) => {
-              const active = isSameId(p.position_id, selectedPositionId);
-              const reportsTo = (p.reports_to_ids || []).map((id) => labelOf(positionById.get(String(id)))).filter(Boolean).join(", ");
-              return (
-                <button key={String(p.position_id)} type="button" aria-pressed={active}
-                  className={`${styles.item} ${styles.positionCard} ${active ? styles.itemActive : ""}`}
-                  onClick={() => onSelectPosition(p.position_id)}>
-                  <span className={styles.cardTop}>
-                    <span className={styles.itemName}>{p.position_name}{p.branch ? ` (${p.branch})` : ""}</span>
-                    {p.is_active ? <span className={styles.itemMeta}>{levelLabel(p.chart_level)}</span> : <StatusBadge status="inactive" />}
-                  </span>
-                  <span className={styles.itemMeta}>{reportsTo ? `Reports to ${reportsTo}` : "Top of the chart"}</span>
-                  <span className={styles.itemMeta}>{peopleOf(p) || "Vacant"}</span>
-                </button>
-              );
-            })}
+              : deptPositionGroups.map((group) => (
+                <div key={group.level || "none"} className={styles.rankGroup}>
+                  <span className={styles.rankLabel}>{group.label}</span>
+                  {group.items.map((p, i) => {
+                    const active = isSameId(p.position_id, selectedPositionId);
+                    const reportsTo = (p.reports_to_ids || []).map((id) => labelOf(positionById.get(String(id)))).filter(Boolean).join(", ");
+                    return (
+                      <div key={String(p.position_id)} className={styles.orderRow}>
+                        <button type="button" aria-pressed={active}
+                          className={`${styles.item} ${styles.positionCard} ${active ? styles.itemActive : ""}`}
+                          onClick={() => onSelectPosition(p.position_id)}>
+                          <span className={styles.cardTop}>
+                            <span className={styles.itemName}>{p.position_name}{p.branch ? ` (${p.branch})` : ""}</span>
+                            {!p.is_active ? <StatusBadge status="inactive" /> : null}
+                          </span>
+                          <span className={styles.itemMeta}>{reportsTo ? `Reports to ${reportsTo}` : "Top of the chart"}</span>
+                          <span className={styles.itemMeta}>{peopleOf(p) || "Vacant"}</span>
+                        </button>
+                        <span className={styles.orderButtons}>
+                          <button type="button" className={styles.orderButton} aria-label={`Move ${p.position_name} up`}
+                            disabled={i === 0 || isPositionBusy} onClick={() => onMovePosition?.(p, -1)}>▲</button>
+                          <button type="button" className={styles.orderButton} aria-label={`Move ${p.position_name} down`}
+                            disabled={i === group.items.length - 1 || isPositionBusy} onClick={() => onMovePosition?.(p, 1)}>▼</button>
+                        </span>
+                      </div>
+                    );
+                  })}
+                </div>
+              ))}
         </Column>
 
         {/* 4 · People and reporting */}

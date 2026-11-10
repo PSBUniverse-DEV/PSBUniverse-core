@@ -14,6 +14,7 @@ import {
 import {
   deleteOrgPositionAction,
   loadOrgPositionsData,
+  moveOrgPositionAction,
   saveOrgPositionAction,
   setOrgPositionActiveAction,
 } from "../data/companyDepartmentSetup.actions.js";
@@ -864,6 +865,8 @@ export default function CompanyDepartmentSetupView({ companies, departments, ini
           nextActive ? "Position restored." : "Position deactivated.")}
         onDeletePosition={(row) => runPositionChange(
           () => deleteOrgPositionAction(row.position_id), "Position deleted.")}
+        onMovePosition={(row, direction) => runPositionChange(
+          () => moveOrgPositionAction(row.position_id, direction), "Order updated.")}
         onRemovePerson={(row, userId) => runPositionChange(
           () => saveOrgPositionAction({
             position_id: row.position_id,
