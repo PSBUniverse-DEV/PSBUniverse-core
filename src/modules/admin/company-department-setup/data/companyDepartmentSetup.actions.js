@@ -344,12 +344,15 @@ export async function loadOrgPositionsData() {
   }));
 
   // Ranks (psb_s_rank), in order, with how many positions use each.
+  const countByRank = new Map();
+  positions.forEach((p) => countByRank.set(String(p.chart_level), (countByRank.get(String(p.chart_level)) || 0) + 1));
   const ranks = (ranksRes.data || []).map((r) => ({
     rank_id: r.rank_id,
     rank_name: r.rank_name || "",
     rank_order: r.rank_order,
     is_active: r.is_active !== false,
-    position_count: positions.filter((p) => String(p.chart_level) === String(r.rank_id)).length,
+    is_default: r.is_default === true,
+    position_count: countByRank.get(String(r.rank_id)) || 0,
   }));
   // Positions: rank order, then their order inside the rank (empty last), then name.
   const rankIndex = new Map(ranks.map((r, i) => [String(r.rank_id), i]));
@@ -482,8 +485,9 @@ async function saveOrgPosition(input) {
     if (error) throw new Error(error.message);
   }
   if (toAdd.length) {
-    const { data: mains } = await supabase.from("psb_m_userposition").select("user_id")
+    const { data: mains, error: mainsError } = await supabase.from("psb_m_userposition").select("user_id")
       .in("user_id", toAdd).eq("is_primary", true).eq("is_active", true);
+    if (mainsError) throw new Error(mainsError.message);
     const hasMain = new Set((mains || []).map((m) => String(m.user_id)));
     const { error } = await supabase.from("psb_m_userposition").insert(
       toAdd.map((id) => ({ user_id: id, position_id: savedId, is_primary: !hasMain.has(String(id)) })),
@@ -504,7 +508,8 @@ async function setOrgPositionActive(positionId, isActive) {
   const id = toIdOrNull(positionId);
   if (!id) throw new Error("Position is required.");
   const supabase = getSupabaseAdmin();
-  const { data: holders } = await supabase.from("psb_m_userposition").select("user_id").eq("position_id", id);
+  const { data: holders, error: holdersError } = await supabase.from("psb_m_userposition").select("user_id").eq("position_id", id);
+  if (holdersError) throw new Error(holdersError.message);
   const { error } = await supabase.from("psb_s_position")
     .update({ is_active: Boolean(isActive), updated_at: new Date().toISOString() }).eq("position_id", id);
   if (error) throw new Error(error.message || "Failed to update the position.");
@@ -517,7 +522,8 @@ async function deleteOrgPosition(positionId) {
   const id = toIdOrNull(positionId);
   if (!id) throw new Error("Position is required.");
   const supabase = getSupabaseAdmin();
-  const { data: holders } = await supabase.from("psb_m_userposition").select("user_id, is_primary").eq("position_id", id);
+  const { data: holders, error: holdersError } = await supabase.from("psb_m_userposition").select("user_id").eq("position_id", id);
+  if (holdersError) throw new Error(holdersError.message);
   const { error } = await supabase.from("psb_s_position").delete().eq("position_id", id);
   if (error) throw new Error(error.message || "Failed to delete the position.");
   await refreshUserSeats(supabase, (holders || []).map((h) => h.user_id));
@@ -529,6 +535,8 @@ async function deleteOrgPosition(positionId) {
 // (reporting loop, wrong company…) must reach the admin.
 async function toPositionResult(work, fallback) {
   try {
+    // Inside the try, so "no access" comes back as a readable error, not a hidden server error.
+    await requireOrgEditor();
     const data = await work();
     return { success: true, ...(data && typeof data === "object" ? data : {}) };
   } catch (error) {
@@ -537,17 +545,14 @@ async function toPositionResult(work, fallback) {
 }
 
 export async function saveOrgPositionAction(input) {
-  await requireOrgEditor();
   return toPositionResult(() => saveOrgPosition(input), "Failed to save the position.");
 }
 
 export async function setOrgPositionActiveAction(positionId, isActive) {
-  await requireOrgEditor();
   return toPositionResult(() => setOrgPositionActive(positionId, isActive), "Failed to update the position.");
 }
 
 export async function deleteOrgPositionAction(positionId) {
-  await requireOrgEditor();
   return toPositionResult(() => deleteOrgPosition(positionId), "Failed to delete the position.");
 }
 
@@ -615,7 +620,6 @@ async function moveOrgPosition(positionId, direction) {
 }
 
 export async function moveOrgPositionAction(positionId, direction) {
-  await requireOrgEditor();
   return toPositionResult(() => moveOrgPosition(positionId, direction), "Failed to change the order.");
 }
 
@@ -728,27 +732,22 @@ async function moveRank(rankId, direction) {
 }
 
 export async function saveRankAction(input) {
-  await requireOrgEditor();
   return toPositionResult(() => saveRank(input), "Failed to save the rank.");
 }
 
 export async function setDefaultRankAction(rankId) {
-  await requireOrgEditor();
   return toPositionResult(() => setDefaultRank(rankId), "Failed to set the default rank.");
 }
 
 export async function setRankActiveAction(rankId, isActive) {
-  await requireOrgEditor();
   return toPositionResult(() => setRankActive(rankId, isActive), "Failed to update the rank.");
 }
 
 export async function deleteRankAction(rankId) {
-  await requireOrgEditor();
   return toPositionResult(() => deleteRank(rankId), "Failed to delete the rank.");
 }
 
 export async function moveRankAction(rankId, direction) {
-  await requireOrgEditor();
   return toPositionResult(() => moveRank(rankId, direction), "Failed to change the order.");
 }
 

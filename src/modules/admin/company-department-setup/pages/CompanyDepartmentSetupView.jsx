@@ -23,7 +23,7 @@ import RanksModal from "./RanksModal.jsx";
 import OrgFlowSection, { COMPANY_LEVEL_KEY } from "./OrgFlowSection.jsx";
 import orgChartModule from "@/modules/admin/org-chart/index.js";
 
-const ORG_CHART_PATH = orgChartModule?.routes?.[0]?.path || "/admin/org-chart";
+const ORG_CHART_PATH = orgChartModule?.routes?.[0]?.path || "";
 
 // ═══════════════════════════════════════════════════════════
 //  HOOKS

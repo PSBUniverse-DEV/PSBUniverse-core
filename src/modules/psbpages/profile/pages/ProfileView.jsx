@@ -14,7 +14,7 @@ import {
   MIN_PASSWORD_LENGTH, PASSWORD_NUMBER_OR_SYMBOL_REGEX,
 } from "../data/profile.data";
 
-const ORG_CHART_PATH = orgChartModule?.routes?.[0]?.path || "/admin/org-chart";
+const ORG_CHART_PATH = orgChartModule?.routes?.[0]?.path || "";
 
 // ── hook ───────────────────────────────────────────────────
 function useProfile() {

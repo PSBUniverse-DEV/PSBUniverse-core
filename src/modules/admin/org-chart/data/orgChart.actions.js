@@ -67,6 +67,20 @@ export async function loadOrgChartData() {
       || String(a.position_name || "").localeCompare(String(b.position_name || "")));
   const visibleIds = new Set(visible.map((p) => String(p.position_id)));
 
+  // Group reporting lines and seats once, instead of scanning them for every position.
+  const reportsByPosition = new Map();
+  (reportsRes.data || []).forEach((r) => {
+    if (!visibleIds.has(String(r.reports_to_position_id))) return;
+    const key = String(r.position_id);
+    reportsByPosition.set(key, [...(reportsByPosition.get(key) || []), r.reports_to_position_id]);
+  });
+  const seatsByPosition = new Map();
+  (seatsRes.data || []).forEach((s) => {
+    if (!userById.has(String(s.user_id))) return;
+    const key = String(s.position_id);
+    seatsByPosition.set(key, [...(seatsByPosition.get(key) || []), s]);
+  });
+
   const positions = visible.map((p) => ({
     position_id: p.position_id,
     comp_id: p.comp_id,
@@ -75,11 +89,8 @@ export async function loadOrgChartData() {
     position_name: p.position_name || "",
     branch: normalizeBranch(p.branch),
     chart_level: p.chart_level,
-    reports_to_ids: (reportsRes.data || [])
-      .filter((r) => String(r.position_id) === String(p.position_id) && visibleIds.has(String(r.reports_to_position_id)))
-      .map((r) => r.reports_to_position_id),
-    people: (seatsRes.data || [])
-      .filter((s) => String(s.position_id) === String(p.position_id) && userById.has(String(s.user_id)))
+    reports_to_ids: reportsByPosition.get(String(p.position_id)) || [],
+    people: (seatsByPosition.get(String(p.position_id)) || [])
       .map((s) => ({ user_id: s.user_id, ...userById.get(String(s.user_id)), is_primary: Boolean(s.is_primary) }))
       .sort((a, b) => a.full_name.localeCompare(b.full_name, undefined, { sensitivity: "base" })),
   }));
