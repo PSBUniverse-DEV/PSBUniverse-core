@@ -11,6 +11,12 @@ import {
   createEmptyCompanyChanges, createEmptyDepartmentChanges,
   executeBatchSave, remapDepartmentsByCompanyId,
 } from "../data/companyDepartmentSetup.data.js";
+import {
+  deleteOrgPositionAction,
+  loadOrgPositionsData,
+  setOrgPositionActiveAction,
+} from "../data/companyDepartmentSetup.actions.js";
+import PositionModal, { positionLabel } from "./PositionModal.jsx";
 
 // ═══════════════════════════════════════════════════════════
 //  HOOKS
@@ -626,8 +632,8 @@ function CompanyDeptHeader({
   return (
     <div className="d-flex flex-wrap justify-content-between align-items-start gap-2 mb-3">
       <div>
-        <h1 className="h3 mb-1">Configuration and Settings</h1>
-        <p className="text-muted mb-0">Manage setup tables and mapping assignments for Company-Department.</p>
+        <h1 className="h3 mb-1">Organization Setup</h1>
+        <p className="text-muted mb-0">Manage companies, departments, and positions for the organization chart.</p>
       </div>
       <div className="d-flex flex-wrap align-items-center justify-content-end gap-2">
         <span className={`small ${hasPendingChanges ? "text-warning-emphasis fw-semibold" : "text-muted"}`}>
@@ -670,6 +676,9 @@ function CompanyTableSection({
   pendingDeactivatedDepartmentIds, pendingHardDeletedDepartmentIds,
   openEditDepartmentDialog,
   openToggleDepartmentDialog, openDeactivateDepartmentDialog, stageHardDeleteDepartment, onUndoBatchActionDept,
+  // position props
+  companyPositions = [], isPositionBusy = false,
+  onAddPosition, onEditPosition, onTogglePosition, onDeletePosition,
 }) {
   const columns = useMemo(() => [
     {
@@ -758,20 +767,71 @@ function CompanyTableSection({
   ], [isMutatingAction, isSaving, openDeactivateDepartmentDialog, openEditDepartmentDialog,
     openToggleDepartmentDialog, pendingDeactivatedDepartmentIds, stageHardDeleteDepartment]);
 
+  const deptNameById = useMemo(
+    () => new Map((decoratedDepartments || []).map((d) => [String(d.dept_id), d.dept_name])), [decoratedDepartments]);
+  const positionById = useMemo(
+    () => new Map((companyPositions || []).map((p) => [String(p.position_id), p])), [companyPositions]);
+
+  const positionColumns = useMemo(() => [
+    { key: "position_name", label: "Position", width: "20%", sortable: true, render: (row) => <span className="fw-semibold">{row?.position_name || ""}</span> },
+    { key: "dept_id", label: "Department", width: "16%", sortable: true,
+      render: (row) => (row?.dept_id != null ? deptNameById.get(String(row.dept_id)) || "—" : <span className="text-muted">Company-level</span>) },
+    { key: "branch", label: "Branch", width: "10%", sortable: true, render: (row) => row?.branch || <span className="text-muted">All</span> },
+    { key: "reports_to_ids", label: "Reports to", width: "24%",
+      render: (row) => ((row?.reports_to_ids || []).map((id) => positionLabel(positionById.get(String(id)), deptNameById)).filter(Boolean).join(", ") || "—") },
+    { key: "holders", label: "People", width: "20%",
+      render: (row) => ((row?.holders || []).map((h) => h.full_name).join(", ") || <span className="text-muted">Vacant</span>) },
+    { key: "is_active", label: "Active", width: "10%", sortable: true, align: "center",
+      render: (row) => <StatusBadge status={row?.is_active ? "active" : "inactive"} /> },
+  ], [deptNameById, positionById]);
+
+  const positionActions = useMemo(() => [
+    { key: "edit-position", label: "Edit", type: "secondary", icon: "pen",
+      disabled: () => isPositionBusy, onClick: (r) => onEditPosition?.(r) },
+    { key: "restore-position", label: "Restore", type: "secondary", icon: "rotate-left",
+      visible: (r) => !r?.is_active, disabled: () => isPositionBusy, onClick: (r) => onTogglePosition?.(r, true) },
+    { key: "deactivate-position", label: "Deactivate", type: "secondary", icon: "ban",
+      visible: (r) => Boolean(r?.is_active), disabled: () => isPositionBusy, onClick: (r) => onTogglePosition?.(r, false) },
+    { key: "delete-position", label: "Delete", type: "danger", icon: "trash", confirm: true,
+      confirmMessage: (r) => `Permanently delete the position "${r?.position_name || ""}"? Its reporting lines and people in it are removed too.`,
+      disabled: () => isPositionBusy, onClick: (r) => onDeletePosition?.(r) },
+  ], [isPositionBusy, onDeletePosition, onEditPosition, onTogglePosition]);
+
   const renderCompanyDetail = useCallback(() => {
     if (!selectedCompany) return null;
+    const companySaved = !isTempCompanyId(selectedCompany.comp_id);
     return (
-      <div>
-        <div className="d-flex align-items-center justify-content-between mb-2">
-          <h6 className="mb-0 small fw-semibold">Departments for: {selectedCompany.comp_name}</h6>
+      <div className="d-flex flex-column gap-3">
+        <div>
+          <div className="d-flex align-items-center justify-content-between mb-2">
+            <h6 className="mb-0 small fw-semibold">Departments for: {selectedCompany.comp_name}</h6>
+          </div>
+          <TableZ columns={deptColumns} data={decoratedDepartments} rowIdKey="dept_id"
+            actions={deptActions} hideFooter
+            emptyMessage="No departments found for this company."
+            onUndoBatchAction={onUndoBatchActionDept} />
         </div>
-        <TableZ columns={deptColumns} data={decoratedDepartments} rowIdKey="dept_id"
-          actions={deptActions} hideFooter
-          emptyMessage="No departments found for this company."
-          onUndoBatchAction={onUndoBatchActionDept} />
+        <div>
+          <div className="d-flex align-items-center justify-content-between mb-2 gap-2">
+            <div>
+              <h6 className="mb-0 small fw-semibold">Positions for: {selectedCompany.comp_name}</h6>
+              <div className="small text-muted">Saved straight away. The org chart is drawn from these.</div>
+            </div>
+            <Button type="button" size="sm" variant="success" disabled={!companySaved || isPositionBusy}
+              onClick={() => onAddPosition?.()}>+ Add Position</Button>
+          </div>
+          {companySaved ? (
+            <TableZ columns={positionColumns} data={companyPositions} rowIdKey="position_id"
+              actions={positionActions} hideFooter
+              emptyMessage="No positions yet. Add the first one." />
+          ) : (
+            <div className="small text-muted">Save Batch first, then add positions to this company.</div>
+          )}
+        </div>
       </div>
     );
-  }, [deptActions, deptColumns, decoratedDepartments, onUndoBatchActionDept, selectedCompany]);
+  }, [companyPositions, deptActions, deptColumns, decoratedDepartments, isPositionBusy, onAddPosition,
+    onUndoBatchActionDept, positionActions, positionColumns, selectedCompany]);
 
   return (
     <TableZ columns={columns} data={decoratedCompanies} rowIdKey="comp_id"
@@ -896,8 +956,48 @@ function CompanyDeptDialog({
 //  MAIN VIEW
 // ═══════════════════════════════════════════════════════════
 
-export default function CompanyDepartmentSetupView({ companies, departments, initialSelectedCompanyId }) {
+export default function CompanyDepartmentSetupView({ companies, departments, initialSelectedCompanyId, positions = [], users = [] }) {
   const h = useCompanyDepartmentSetup({ companies, departments, initialSelectedCompanyId });
+  const [org, setOrg] = useState({ positions, users });
+
+  useEffect(() => {
+    setOrg({ positions, users });
+  }, [positions, users]);
+  const [positionModal, setPositionModal] = useState(null);
+  const [isPositionBusy, setIsPositionBusy] = useState(false);
+
+  const reloadOrg = useCallback(async () => {
+    const next = await loadOrgPositionsData();
+    setOrg({ positions: next?.positions || [], users: next?.users || [] });
+  }, []);
+
+  const companyPositions = useMemo(
+    () => org.positions.filter((p) => isSameId(p?.comp_id, h.selectedCompany?.comp_id)),
+    [h.selectedCompany?.comp_id, org.positions]);
+  const savedCompanyDepartments = useMemo(
+    () => (h.decoratedDepartments || []).filter((d) => !isTempDepartmentId(d?.dept_id)),
+    [h.decoratedDepartments]);
+
+  const runPositionChange = useCallback(async (work, message) => {
+    if (isPositionBusy) return;
+    setIsPositionBusy(true);
+    try {
+      const result = await work();
+      if (result && result.success === false) throw new Error(result.error || "Failed to update the position.");
+      await reloadOrg();
+      toastSuccess(message, "Positions");
+    } catch (error) {
+      toastError(error?.message || "Failed to update the position.");
+    } finally {
+      setIsPositionBusy(false);
+    }
+  }, [isPositionBusy, reloadOrg]);
+
+  const handlePositionSaved = useCallback(async (message) => {
+    await reloadOrg();
+    setPositionModal(null);
+    toastSuccess(message, "Positions");
+  }, [reloadOrg]);
 
   return (
     <main className="container py-4">
@@ -928,6 +1028,15 @@ export default function CompanyDepartmentSetupView({ companies, departments, ini
         openDeactivateDepartmentDialog={h.openDeactivateDepartmentDialog}
         stageHardDeleteDepartment={h.stageHardDeleteDepartment}
         onUndoBatchActionDept={h.unstageHardDeleteDepartment}
+        companyPositions={companyPositions}
+        isPositionBusy={isPositionBusy}
+        onAddPosition={() => setPositionModal({ position: null })}
+        onEditPosition={(row) => setPositionModal({ position: row })}
+        onTogglePosition={(row, nextActive) => runPositionChange(
+          () => setOrgPositionActiveAction(row.position_id, nextActive),
+          nextActive ? "Position restored." : "Position deactivated.")}
+        onDeletePosition={(row) => runPositionChange(
+          () => deleteOrgPositionAction(row.position_id), "Position deleted.")}
       />
 
       <CompanyDeptDialog
@@ -939,6 +1048,19 @@ export default function CompanyDepartmentSetupView({ companies, departments, ini
         submitAddDepartment={h.submitAddDepartment} submitEditDepartment={h.submitEditDepartment}
         submitToggleDepartment={h.submitToggleDepartment} submitDeactivateDepartment={h.submitDeactivateDepartment}
       />
+
+      {positionModal && h.selectedCompany ? (
+        <PositionModal
+          key={String(positionModal.position?.position_id ?? "new")}
+          company={h.selectedCompany}
+          position={positionModal.position}
+          departments={savedCompanyDepartments}
+          positions={companyPositions}
+          users={org.users}
+          onClose={() => setPositionModal(null)}
+          onSaved={handlePositionSaved}
+        />
+      ) : null}
     </main>
   );
 }

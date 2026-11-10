@@ -232,3 +232,224 @@ export async function saveCompanyDepartmentBatch(companyChanges, departmentChang
 
   return { companyIdMap };
 }
+
+// ─── Organization: positions ───────────────────────────────
+// A position is a seat in a company (optionally in one of its departments,
+// optionally at a branch). It reports to one or more positions of the same
+// company (psb_m_positionreport) and is held by one or more users
+// (psb_m_userposition). The org chart is drawn from these tables. Positions
+// save straight away (they are not part of the company/department Save Batch).
+
+function toIdOrNull(value) {
+  if (value === undefined || value === null || value === "") return null;
+  const n = Number(value);
+  return Number.isFinite(n) ? n : null;
+}
+
+function userDisplayName(user) {
+  const name = [user?.first_name, user?.last_name].filter(Boolean).join(" ").trim();
+  return name || user?.username || user?.email || `User ${user?.user_id}`;
+}
+
+/** Every position with its reporting lines and holders, plus active users for the people picker. */
+export async function loadOrgPositionsData() {
+  const supabase = getSupabaseAdmin();
+  const [positionsRes, reportsRes, holdersRes, usersRes] = await Promise.all([
+    supabase.from("psb_s_position").select("*")
+      .order("chart_level", { ascending: true })
+      .order("display_order", { ascending: true })
+      .order("position_name", { ascending: true }),
+    supabase.from("psb_m_positionreport").select("position_id, reports_to_position_id"),
+    supabase.from("psb_m_userposition").select("user_id, position_id, is_primary").eq("is_active", true),
+    supabase.from("psb_s_user").select("user_id, username, email, first_name, last_name").eq("is_active", true),
+  ]);
+  const failed = positionsRes.error || reportsRes.error || holdersRes.error || usersRes.error;
+  if (failed) throw new Error(failed.message || "Failed to load positions.");
+
+  const users = (usersRes.data || [])
+    .map((u) => ({ user_id: u.user_id, full_name: userDisplayName(u), username: u.username || "", email: u.email || "" }))
+    .sort((a, b) => a.full_name.localeCompare(b.full_name, undefined, { sensitivity: "base" }));
+  const nameById = new Map(users.map((u) => [String(u.user_id), u.full_name]));
+
+  const positions = (positionsRes.data || []).map((p) => ({
+    ...p,
+    reports_to_ids: (reportsRes.data || [])
+      .filter((r) => String(r.position_id) === String(p.position_id))
+      .map((r) => r.reports_to_position_id),
+    holders: (holdersRes.data || [])
+      .filter((h) => String(h.position_id) === String(p.position_id))
+      .map((h) => ({ user_id: h.user_id, full_name: nameById.get(String(h.user_id)) || `User ${h.user_id}`, is_primary: Boolean(h.is_primary) })),
+  }));
+
+  return { positions, users };
+}
+
+// Users who lost their main seat get another of their active seats as main.
+async function promoteMainSeats(supabase, userIds) {
+  for (const userId of userIds) {
+    const { data: seats } = await supabase.from("psb_m_userposition")
+      .select("position_id, is_primary").eq("user_id", userId).eq("is_active", true);
+    if (!seats?.length || seats.some((s) => s.is_primary)) continue;
+    await supabase.from("psb_m_userposition").update({ is_primary: true })
+      .eq("user_id", userId).eq("position_id", seats[0].position_id);
+  }
+}
+
+/**
+ * Create (no position_id) or update a position, and replace its reporting
+ * lines and holders.
+ * input: { position_id, comp_id, dept_id, position_name, branch, chart_level, reports_to_ids[], user_ids[] }
+ * Rules: the department must belong to the company; a position reports only
+ * to positions of the same company, never to itself, and never in a loop.
+ * A newly placed user with no main seat gets this one as main.
+ */
+async function saveOrgPosition(input) {
+  const supabase = getSupabaseAdmin();
+  const positionId = toIdOrNull(input?.position_id);
+  const compId = toIdOrNull(input?.comp_id);
+  const deptId = toIdOrNull(input?.dept_id);
+  const name = normalizeText(input?.position_name);
+  const branch = normalizeText(input?.branch) || null;
+  const chartLevel = Math.min(Math.max(toIdOrNull(input?.chart_level) ?? 4, 1), 9);
+  const reportsToIds = [...new Set((input?.reports_to_ids || []).map(toIdOrNull).filter((id) => id != null))];
+  const userIds = [...new Set((input?.user_ids || []).map(toIdOrNull).filter((id) => id != null))];
+
+  if (!compId) throw new Error("Company is required.");
+  if (!name) throw new Error("Position name is required.");
+  if (name.length > 100) throw new Error("Position name must be 100 characters or less.");
+  if (branch && branch.length > 50) throw new Error("Branch must be 50 characters or less.");
+
+  if (deptId) {
+    const { data: dept, error } = await supabase.from("psb_s_department").select("dept_id, comp_id").eq("dept_id", deptId).maybeSingle();
+    if (error) throw new Error(error.message);
+    if (!dept || String(dept.comp_id) !== String(compId)) throw new Error("That department doesn't belong to this company.");
+  }
+
+  if (reportsToIds.length) {
+    if (positionId && reportsToIds.some((id) => String(id) === String(positionId))) {
+      throw new Error("A position can't report to itself.");
+    }
+    const [{ data: targets, error: targetsError }, { data: links, error: linksError }] = await Promise.all([
+      supabase.from("psb_s_position").select("position_id, comp_id").in("position_id", reportsToIds),
+      supabase.from("psb_m_positionreport").select("position_id, reports_to_position_id"),
+    ]);
+    if (targetsError || linksError) throw new Error((targetsError || linksError).message);
+    if ((targets || []).length !== reportsToIds.length || (targets || []).some((t) => String(t.comp_id) !== String(compId))) {
+      throw new Error("A position can only report to positions in the same company.");
+    }
+    // No loop: walking up from each new manager must never reach this position.
+    if (positionId) {
+      const parentsOf = new Map();
+      (links || []).forEach((l) => {
+        if (String(l.position_id) === String(positionId)) return; // being replaced
+        const key = String(l.position_id);
+        parentsOf.set(key, [...(parentsOf.get(key) || []), String(l.reports_to_position_id)]);
+      });
+      const seen = new Set();
+      const stack = reportsToIds.map(String);
+      while (stack.length) {
+        const current = stack.pop();
+        if (current === String(positionId)) throw new Error("That would make a reporting loop.");
+        if (seen.has(current)) continue;
+        seen.add(current);
+        stack.push(...(parentsOf.get(current) || []));
+      }
+    }
+  }
+
+  const now = new Date().toISOString();
+  const fields = { comp_id: compId, dept_id: deptId, position_name: name, branch, chart_level: chartLevel };
+  let savedId = positionId;
+  if (positionId) {
+    const { data, error } = await supabase.from("psb_s_position").update({ ...fields, updated_at: now })
+      .eq("position_id", positionId).select("position_id");
+    if (error) throw new Error(error.message || "Failed to save the position.");
+    if (!data?.length) throw new Error("This position no longer exists. Refresh the page.");
+  } else {
+    const { data, error } = await supabase.from("psb_s_position").insert(fields).select("position_id").single();
+    if (error) throw new Error(error.message || "Failed to create the position.");
+    savedId = data.position_id;
+  }
+
+  // Reporting lines: replace.
+  const { error: clearReportsError } = await supabase.from("psb_m_positionreport").delete().eq("position_id", savedId);
+  if (clearReportsError) throw new Error(clearReportsError.message);
+  if (reportsToIds.length) {
+    const { error } = await supabase.from("psb_m_positionreport")
+      .insert(reportsToIds.map((id) => ({ position_id: savedId, reports_to_position_id: id })));
+    if (error) throw new Error(error.message || "Saved the position, but not its reporting lines. Save again.");
+  }
+
+  // Holders: add the new ones, remove the ones taken out.
+  const { data: currentRows, error: currentError } = await supabase.from("psb_m_userposition")
+    .select("user_id, is_primary").eq("position_id", savedId);
+  if (currentError) throw new Error(currentError.message);
+  const currentIds = (currentRows || []).map((r) => String(r.user_id));
+  const toRemove = (currentRows || []).filter((r) => !userIds.some((id) => String(id) === String(r.user_id)));
+  const toAdd = userIds.filter((id) => !currentIds.includes(String(id)));
+
+  if (toRemove.length) {
+    const { error } = await supabase.from("psb_m_userposition").delete()
+      .eq("position_id", savedId).in("user_id", toRemove.map((r) => r.user_id));
+    if (error) throw new Error(error.message);
+    await promoteMainSeats(supabase, toRemove.filter((r) => r.is_primary).map((r) => r.user_id));
+  }
+  if (toAdd.length) {
+    const { data: mains } = await supabase.from("psb_m_userposition").select("user_id")
+      .in("user_id", toAdd).eq("is_primary", true).eq("is_active", true);
+    const hasMain = new Set((mains || []).map((m) => String(m.user_id)));
+    const { error } = await supabase.from("psb_m_userposition").insert(
+      toAdd.map((id) => ({ user_id: id, position_id: savedId, is_primary: !hasMain.has(String(id)) })),
+    );
+    if (error) throw new Error(error.message || "Saved the position, but not its people. Save again.");
+  }
+
+  return { position_id: savedId };
+}
+
+async function setOrgPositionActive(positionId, isActive) {
+  const id = toIdOrNull(positionId);
+  if (!id) throw new Error("Position is required.");
+  const supabase = getSupabaseAdmin();
+  const { error } = await supabase.from("psb_s_position")
+    .update({ is_active: Boolean(isActive), updated_at: new Date().toISOString() }).eq("position_id", id);
+  if (error) throw new Error(error.message || "Failed to update the position.");
+  return { success: true };
+}
+
+/** Permanently delete a position; its reporting lines and seats go with it. */
+async function deleteOrgPosition(positionId) {
+  const id = toIdOrNull(positionId);
+  if (!id) throw new Error("Position is required.");
+  const supabase = getSupabaseAdmin();
+  const { data: holders } = await supabase.from("psb_m_userposition").select("user_id, is_primary").eq("position_id", id);
+  const { error } = await supabase.from("psb_s_position").delete().eq("position_id", id);
+  if (error) throw new Error(error.message || "Failed to delete the position.");
+  await promoteMainSeats(supabase, (holders || []).filter((h) => h.is_primary).map((h) => h.user_id));
+  return { success: true };
+}
+
+// Exported position actions return { success, error } instead of throwing:
+// in production Next.js hides a thrown error's message, and these messages
+// (reporting loop, wrong company…) must reach the admin.
+async function toPositionResult(work, fallback) {
+  try {
+    const data = await work();
+    return { success: true, ...(data && typeof data === "object" ? data : {}) };
+  } catch (error) {
+    return { success: false, error: error?.message || fallback };
+  }
+}
+
+export async function saveOrgPositionAction(input) {
+  return toPositionResult(() => saveOrgPosition(input), "Failed to save the position.");
+}
+
+export async function setOrgPositionActiveAction(positionId, isActive) {
+  return toPositionResult(() => setOrgPositionActive(positionId, isActive), "Failed to update the position.");
+}
+
+export async function deleteOrgPositionAction(positionId) {
+  return toPositionResult(() => deleteOrgPosition(positionId), "Failed to delete the position.");
+}
+
