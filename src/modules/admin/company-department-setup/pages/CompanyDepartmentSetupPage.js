@@ -11,7 +11,7 @@ export default async function CompanyDepartmentSetupPage({ searchParams }) {
   const resolvedSearchParams = await searchParams;
 
   try {
-    const [{ companies, departments }, { positions, users }] = await Promise.all([
+    const [{ companies, departments }, { positions, users, ranks }] = await Promise.all([
       loadCompanyDepartmentSetupData(),
       loadOrgPositionsData(),
     ]);
@@ -28,6 +28,7 @@ export default async function CompanyDepartmentSetupPage({ searchParams }) {
         initialSelectedCompanyId={initialSelectedCompanyId}
         positions={positions}
         users={users}
+        ranks={ranks}
       />
     );
   } catch (error) {

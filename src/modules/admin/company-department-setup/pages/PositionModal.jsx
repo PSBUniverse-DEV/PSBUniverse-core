@@ -5,15 +5,14 @@ import { Button, Input, Modal, toastError } from "@/shared/components/ui";
 import { saveOrgPositionAction } from "../data/companyDepartmentSetup.actions.js";
 import styles from "./PositionModal.module.css";
 
-// Rank (chart_level): sorts positions in lists and on the chart, 1 = top.
-// Who sits above whom comes from "Reports to", not from rank.
-export const CHART_LEVELS = [
-  { value: 1, label: "Head" },
-  { value: 2, label: "Lead" },
-  { value: 3, label: "Team Lead" },
-  { value: 4, label: "Member" },
-  { value: 5, label: "Support" },
-];
+// Ranks come from psb_s_rank (managed with the Ranks button on Organization Setup).
+// chart_level holds the rank_id. Rank sorts positions; who sits above whom comes from "Reports to".
+// A new position starts on the rank marked ★ Default in the Ranks window, else the last active rank.
+function defaultRankId(ranks) {
+  const active = (ranks || []).filter((r) => r.is_active);
+  const chosen = active.find((r) => r.is_default) || active[active.length - 1];
+  return String(chosen?.rank_id ?? "");
+}
 const MAX_MATCHES = 8;
 
 /** "Scheduling · Team Lead", "Company Head (Texas)". */
@@ -61,13 +60,15 @@ function PreviewCard({ title, subtitle, vacant = false, current = false }) {
  * Add / Edit Position. Saves straight away (not part of Save Batch).
  * departments: the company's saved departments; positions: the company's positions.
  */
-export default function PositionModal({ company, position, departments, positions, users, defaultDeptId = "", onClose, onSaved }) {
+export default function PositionModal({ company, position, departments, positions, users, ranks = [], defaultDeptId = "", onClose, onSaved }) {
   const isEdit = Boolean(position?.position_id);
   const [name, setName] = useState(position?.position_name || "");
   const [deptId, setDeptId] = useState(position?.dept_id != null ? String(position.dept_id) : String(defaultDeptId || ""));
   const [branch, setBranch] = useState(isAllBranch(position?.branch) ? "" : String(position?.branch || ""));
   const [typingBranch, setTypingBranch] = useState(false);
-  const [chartLevel, setChartLevel] = useState(String(position?.chart_level ?? 4));
+  const [chartLevel, setChartLevel] = useState(() => (position?.chart_level != null ? String(position.chart_level) : defaultRankId(ranks)));
+  // Active ranks, plus this position's current rank even if it has been disabled.
+  const rankOptions = (ranks || []).filter((r) => r.is_active || String(r.rank_id) === String(position?.chart_level ?? ""));
   const [reportsTo, setReportsTo] = useState(() => (position?.reports_to_ids || []).map((id) => String(id)));
   const [holderIds, setHolderIds] = useState(() => (position?.holders || []).map((h) => String(h.user_id)));
   const [reportSearch, setReportSearch] = useState("");
@@ -142,6 +143,7 @@ export default function PositionModal({ company, position, departments, position
 
   const handleSave = async () => {
     if (!name.trim()) { toastError("Position name is required."); return; }
+    if (!chartLevel) { toastError("Pick a rank."); return; }
     setIsSaving(true);
     try {
       const result = await saveOrgPositionAction({
@@ -232,12 +234,16 @@ export default function PositionModal({ company, position, departments, position
           <section className={styles.section}>
             <span className={styles.sectionLabel}>2 · Rank</span>
             <div className={styles.segmented} role="group" aria-label="Rank">
-              {CHART_LEVELS.map((level) => {
-                const on = String(level.value) === String(chartLevel);
+              {rankOptions.length === 0 ? (
+                <span className={styles.hint}>No ranks yet. Add them with the Ranks button on Organization Setup.</span>
+              ) : rankOptions.map((rank) => {
+                const on = String(rank.rank_id) === String(chartLevel);
                 return (
-                  <button key={level.value} type="button" aria-pressed={on}
+                  <button key={String(rank.rank_id)} type="button" aria-pressed={on}
                     className={`${styles.segment} ${on ? styles.segmentOn : ""}`}
-                    onClick={() => setChartLevel(String(level.value))}>{level.label}</button>
+                    onClick={() => setChartLevel(String(rank.rank_id))}>
+                    {rank.rank_name}{rank.is_active ? "" : " (disabled)"}
+                  </button>
                 );
               })}
             </div>

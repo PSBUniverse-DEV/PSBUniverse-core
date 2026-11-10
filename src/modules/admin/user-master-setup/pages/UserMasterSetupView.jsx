@@ -19,8 +19,14 @@ import {
 //  HOOKS
 // ═══════════════════════════════════════════════════════════
 
-const EMPTY_ACCESS_EDITOR = { mode: null, access_key: null, original_app_id: "", original_role_id: "", app_id: "", role_id: "" };
+// The status whose name means "active" (see inferActiveFromStatus), so no status id is hard-coded.
+function activeStatusIdOf(statuses, fallback) {
+  const list = Array.isArray(statuses) ? statuses : [];
+  const match = list.find((s) => inferActiveFromStatus(s?.status_id, list, false));
+  return match ? String(match.status_id) : fallback;
+}
 
+const EMPTY_ACCESS_EDITOR = { mode: null, access_key: null, original_app_id: "", original_role_id: "", app_id: "", role_id: "" };
 function useUserPanel({
   lookups, tableRows, selectedUserRow, pendingBatch,
   setTableRows, setPendingBatch, refreshUsers,
@@ -690,8 +696,7 @@ function UserPanelSection({
                           Deactivate User
                         </Button>
                       ) : (
-                        <Button type="button" variant="success" size="sm" onClick={() => { setForm((f) => ({ ...f, is_active: true, status_id: "1" })); }} disabled={isStaging || isSavingBatch}>
-                          Activate User
+                        <Button type="button" variant="success" size="sm"                         onClick={() => { setForm((f) => ({ ...f, is_active: true, status_id: activeStatusIdOf(lookups?.statuses, f.status_id) })); }} disabled={isStaging || isSavingBatch}>                          Activate User
                         </Button>
                       )}
                       <p className="small text-muted mt-1 mb-0">{form?.is_active ? "Deactivating will revoke all access mappings." : "Reactivate this user account."}</p>

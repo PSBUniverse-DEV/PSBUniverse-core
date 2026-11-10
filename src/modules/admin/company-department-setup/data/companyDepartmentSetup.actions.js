@@ -2,6 +2,7 @@
 
 import { getSupabaseAdmin } from "@/core/supabase/admin";
 import { refreshUserSeats } from "./orgSeats.server.js";
+import { requireOrgEditor } from "./orgAccess.server.js";
 
 // ─── Private helpers ───────────────────────────────────────
 
@@ -37,6 +38,7 @@ export async function loadCompanyDepartmentSetupData() {
 // ─── Company Actions ───────────────────────────────────────
 
 export async function createCompanyAction(payload) {
+  await requireOrgEditor();
   const supabase = getSupabaseAdmin();
   const compName = normalizeText(payload?.comp_name);
   if (!compName) throw new Error("Company name is required.");
@@ -56,6 +58,7 @@ export async function createCompanyAction(payload) {
 }
 
 export async function updateCompanyAction(companyId, updates) {
+  await requireOrgEditor();
   if (companyId == null || companyId === "") throw new Error("Company ID is required.");
   const supabase = getSupabaseAdmin();
   const patch = {};
@@ -77,6 +80,7 @@ export async function updateCompanyAction(companyId, updates) {
 }
 
 export async function deactivateCompanyAction(companyId) {
+  await requireOrgEditor();
   if (companyId == null || companyId === "") throw new Error("Company ID is required.");
   const supabase = getSupabaseAdmin();
 
@@ -89,6 +93,7 @@ export async function deactivateCompanyAction(companyId) {
 }
 
 export async function hardDeleteCompanyAction(companyId) {
+  await requireOrgEditor();
   if (companyId == null || companyId === "") throw new Error("Company ID is required.");
   const supabase = getSupabaseAdmin();
 
@@ -106,6 +111,7 @@ export async function hardDeleteCompanyAction(companyId) {
 // ─── Department Actions ────────────────────────────────────
 
 export async function createDepartmentAction(payload) {
+  await requireOrgEditor();
   const supabase = getSupabaseAdmin();
   const deptName = normalizeText(payload?.dept_name);
   if (!deptName) throw new Error("Department name is required.");
@@ -126,6 +132,7 @@ export async function createDepartmentAction(payload) {
 }
 
 export async function updateDepartmentAction(departmentId, updates) {
+  await requireOrgEditor();
   if (departmentId == null || departmentId === "") throw new Error("Department ID is required.");
   const supabase = getSupabaseAdmin();
   const patch = {};
@@ -145,6 +152,7 @@ export async function updateDepartmentAction(departmentId, updates) {
 }
 
 export async function deactivateDepartmentAction(departmentId) {
+  await requireOrgEditor();
   if (departmentId == null || departmentId === "") throw new Error("Department ID is required.");
   const supabase = getSupabaseAdmin();
 
@@ -154,6 +162,7 @@ export async function deactivateDepartmentAction(departmentId) {
 }
 
 export async function hardDeleteDepartmentAction(departmentId) {
+  await requireOrgEditor();
   if (departmentId == null || departmentId === "") throw new Error("Department ID is required.");
   const supabase = getSupabaseAdmin();
 
@@ -176,6 +185,7 @@ const TEMP_DEPARTMENT_ID_PREFIX = "tmp-department-";
  * of each step run together. Returns { companyIdMap: { tempId: newId } }.
  */
 export async function saveCompanyDepartmentBatch(companyChanges, departmentChanges) {
+  await requireOrgEditor();
   const companies = companyChanges || {};
   const departments = departmentChanges || {};
   const companyIdMap = {};
@@ -282,6 +292,7 @@ function userDisplayName(user) {
 
 /** Every position with its reporting lines and holders, plus active users for the people picker. */
 export async function loadOrgPositionsData() {
+  await requireOrgEditor();
   const supabase = getSupabaseAdmin();
   const [positionsRes, reportsRes, holdersRes, usersRes, ranksRes] = await Promise.all([
     supabase.from("psb_s_position").select("*")
@@ -291,7 +302,7 @@ export async function loadOrgPositionsData() {
     supabase.from("psb_m_positionreport").select("position_id, reports_to_position_id"),
     supabase.from("psb_m_userposition").select("user_id, position_id, is_primary").eq("is_active", true),
     supabase.from("psb_s_user").select("user_id, username, email, first_name, last_name, is_active"),
-    supabase.from("psb_s_rank").select("rank_id, rank_name, rank_order, is_active")
+    supabase.from("psb_s_rank").select("rank_id, rank_name, rank_order, is_active, is_default")
       .order("rank_order", { ascending: true })
       .order("rank_name", { ascending: true }),
   ]);
@@ -308,16 +319,28 @@ export async function loadOrgPositionsData() {
     u.is_active === false ? `${userDisplayName(u)} (inactive)` : userDisplayName(u),
   ]));
 
+  // Group reporting lines and holders once, instead of scanning them for every position.
+  const reportsByPosition = new Map();
+  (reportsRes.data || []).forEach((r) => {
+    const key = String(r.position_id);
+    reportsByPosition.set(key, [...(reportsByPosition.get(key) || []), r.reports_to_position_id]);
+  });
+  const holdersByPosition = new Map();
+  (holdersRes.data || []).forEach((h) => {
+    const key = String(h.position_id);
+    holdersByPosition.set(key, [...(holdersByPosition.get(key) || []), {
+      user_id: h.user_id,
+      full_name: nameById.get(String(h.user_id)) || `User ${h.user_id}`,
+      is_primary: Boolean(h.is_primary),
+    }]);
+  });
+
   const positions = (positionsRes.data || []).map((p) => ({
     ...p,
     // Rows saved before "All" was blocked: "All" / "All branches" means every branch.
     branch: /^all( branches)?$/i.test(String(p.branch || "").trim()) ? null : p.branch,
-    reports_to_ids: (reportsRes.data || [])
-      .filter((r) => String(r.position_id) === String(p.position_id))
-      .map((r) => r.reports_to_position_id),
-    holders: (holdersRes.data || [])
-      .filter((h) => String(h.position_id) === String(p.position_id))
-      .map((h) => ({ user_id: h.user_id, full_name: nameById.get(String(h.user_id)) || `User ${h.user_id}`, is_primary: Boolean(h.is_primary) })),
+    reports_to_ids: reportsByPosition.get(String(p.position_id)) || [],
+    holders: holdersByPosition.get(String(p.position_id)) || [],
   }));
 
   // Ranks (psb_s_rank), in order, with how many positions use each.
@@ -514,14 +537,17 @@ async function toPositionResult(work, fallback) {
 }
 
 export async function saveOrgPositionAction(input) {
+  await requireOrgEditor();
   return toPositionResult(() => saveOrgPosition(input), "Failed to save the position.");
 }
 
 export async function setOrgPositionActiveAction(positionId, isActive) {
+  await requireOrgEditor();
   return toPositionResult(() => setOrgPositionActive(positionId, isActive), "Failed to update the position.");
 }
 
 export async function deleteOrgPositionAction(positionId) {
+  await requireOrgEditor();
   return toPositionResult(() => deleteOrgPosition(positionId), "Failed to delete the position.");
 }
 
@@ -589,6 +615,7 @@ async function moveOrgPosition(positionId, direction) {
 }
 
 export async function moveOrgPositionAction(positionId, direction) {
+  await requireOrgEditor();
   return toPositionResult(() => moveOrgPosition(positionId, direction), "Failed to change the order.");
 }
 
@@ -598,7 +625,7 @@ export async function moveOrgPositionAction(positionId, direction) {
 // but positions already using it keep it. A rank in use can't be deleted.
 
 async function loadRanksOrdered(supabase) {
-  const { data, error } = await supabase.from("psb_s_rank").select("rank_id, rank_name, rank_order, is_active")
+  const { data, error } = await supabase.from("psb_s_rank").select("rank_id, rank_name, rank_order, is_active, is_default")
     .order("rank_order", { ascending: true }).order("rank_name", { ascending: true });
   if (error) throw new Error(error.message);
   return data || [];
@@ -634,6 +661,8 @@ async function setRankActive(rankId, isActive) {
   const id = toIdOrNull(rankId);
   if (!id) throw new Error("Rank is required.");
   const supabase = getSupabaseAdmin();
+  const rank = (await loadRanksOrdered(supabase)).find((r) => String(r.rank_id) === String(id));
+  if (rank?.is_default && !isActive) throw new Error("Make another rank the default first.");
   if (!isActive) {
     const ranks = await loadRanksOrdered(supabase);
     const othersActive = ranks.filter((r) => r.is_active !== false && String(r.rank_id) !== String(id));
@@ -644,10 +673,29 @@ async function setRankActive(rankId, isActive) {
   if (error) throw new Error(error.message || "Failed to update the rank.");
 }
 
+async function setDefaultRank(rankId) {
+  const id = toIdOrNull(rankId);
+  if (!id) throw new Error("Rank is required.");
+  const supabase = getSupabaseAdmin();
+  const ranks = await loadRanksOrdered(supabase);
+  const target = ranks.find((r) => String(r.rank_id) === String(id));
+  if (!target) throw new Error("That rank no longer exists. Refresh the page.");
+  if (target.is_active === false) throw new Error("Enable this rank before making it default.");
+  const { error } = await supabase.from("psb_s_rank")
+    .update({ is_default: false, updated_at: new Date().toISOString() })
+    .neq("rank_id", id);
+  if (error) throw new Error(error.message || "Failed to clear the old default rank.");
+  const { error: setError } = await supabase.from("psb_s_rank")
+    .update({ is_default: true, updated_at: new Date().toISOString() }).eq("rank_id", id);
+  if (setError) throw new Error(setError.message || "Failed to set the default rank.");
+}
+
 async function deleteRank(rankId) {
   const id = toIdOrNull(rankId);
   if (!id) throw new Error("Rank is required.");
   const supabase = getSupabaseAdmin();
+  const rank = (await loadRanksOrdered(supabase)).find((r) => String(r.rank_id) === String(id));
+  if (rank?.is_default) throw new Error("Make another rank the default first.");
   const { count, error: countError } = await supabase.from("psb_s_position")
     .select("position_id", { count: "exact", head: true }).eq("chart_level", id);
   if (countError) throw new Error(countError.message);
@@ -680,18 +728,27 @@ async function moveRank(rankId, direction) {
 }
 
 export async function saveRankAction(input) {
+  await requireOrgEditor();
   return toPositionResult(() => saveRank(input), "Failed to save the rank.");
 }
 
+export async function setDefaultRankAction(rankId) {
+  await requireOrgEditor();
+  return toPositionResult(() => setDefaultRank(rankId), "Failed to set the default rank.");
+}
+
 export async function setRankActiveAction(rankId, isActive) {
+  await requireOrgEditor();
   return toPositionResult(() => setRankActive(rankId, isActive), "Failed to update the rank.");
 }
 
 export async function deleteRankAction(rankId) {
+  await requireOrgEditor();
   return toPositionResult(() => deleteRank(rankId), "Failed to delete the rank.");
 }
 
 export async function moveRankAction(rankId, direction) {
+  await requireOrgEditor();
   return toPositionResult(() => moveRank(rankId, direction), "Failed to change the order.");
 }
 

@@ -19,6 +19,7 @@ import {
   setOrgPositionActiveAction,
 } from "../data/companyDepartmentSetup.actions.js";
 import PositionModal from "./PositionModal.jsx";
+import RanksModal from "./RanksModal.jsx";
 import OrgFlowSection, { COMPANY_LEVEL_KEY } from "./OrgFlowSection.jsx";
 
 // ═══════════════════════════════════════════════════════════
@@ -620,7 +621,7 @@ function useCompanyDepartmentSetup({ companies = [], departments = [], initialSe
 function CompanyDeptHeader({
   hasPendingChanges, pendingSummary, isSaving, isMutatingAction,
   handleSaveBatch, handleCancelBatch,
-  openAddCompanyDialog,
+  openAddCompanyDialog, onOpenRanks,
 }) {
   return (
     <div className="d-flex flex-wrap justify-content-between align-items-start gap-2 mb-3">
@@ -651,6 +652,7 @@ function CompanyDeptHeader({
           disabled={!hasPendingChanges || isSaving || isMutatingAction} onClick={handleSaveBatch}>Save Batch</Button>
         <Button type="button" size="sm" variant="ghost"
           disabled={!hasPendingChanges || isSaving || isMutatingAction} onClick={handleCancelBatch}>Cancel Batch</Button>
+        <Button type="button" size="sm" variant="secondary" onClick={onOpenRanks}>Ranks</Button>
         <a href="/admin/org-chart" className="btn btn-sm btn-outline-primary">Org Chart</a>
       </div>
     </div>
@@ -771,13 +773,14 @@ function CompanyDeptDialog({
 //  MAIN VIEW
 // ═══════════════════════════════════════════════════════════
 
-export default function CompanyDepartmentSetupView({ companies, departments, initialSelectedCompanyId, positions = [], users = [] }) {
+export default function CompanyDepartmentSetupView({ companies, departments, initialSelectedCompanyId, positions = [], users = [], ranks = [] }) {
   const h = useCompanyDepartmentSetup({ companies, departments, initialSelectedCompanyId });
-  const [org, setOrg] = useState({ positions, users });
+  const [org, setOrg] = useState({ positions, users, ranks });
+  const [showRanks, setShowRanks] = useState(false);
 
   useEffect(() => {
-    setOrg({ positions, users });
-  }, [positions, users]);
+    setOrg({ positions, users, ranks });
+  }, [positions, users, ranks]);
   const [positionModal, setPositionModal] = useState(null);
   const [isPositionBusy, setIsPositionBusy] = useState(false);
   // Flow selection: department (or COMPANY_LEVEL_KEY) and position inside the selected company.
@@ -792,7 +795,7 @@ export default function CompanyDepartmentSetupView({ companies, departments, ini
 
   const reloadOrg = useCallback(async () => {
     const next = await loadOrgPositionsData();
-    setOrg({ positions: next?.positions || [], users: next?.users || [] });
+    setOrg({ positions: next?.positions || [], users: next?.users || [], ranks: next?.ranks || [] });
   }, []);
 
   const companyPositions = useMemo(
@@ -830,6 +833,7 @@ export default function CompanyDepartmentSetupView({ companies, departments, ini
         isSaving={h.isSaving} isMutatingAction={h.isMutatingAction}
         handleSaveBatch={h.handleSaveBatch} handleCancelBatch={h.handleCancelBatch}
         openAddCompanyDialog={h.openAddCompanyDialog}
+        onOpenRanks={() => setShowRanks(true)}
       />
 
       <OrgFlowSection
@@ -854,6 +858,7 @@ export default function CompanyDepartmentSetupView({ companies, departments, ini
         allPositions={org.positions}
         companyPositions={companyPositions}
         isPositionBusy={isPositionBusy}
+        ranks={org.ranks}
         selectedDeptKey={selectedDeptKey}
         onSelectDept={(key) => { setSelectedDeptKey(key); setSelectedPositionId(null); }}
         selectedPositionId={selectedPositionId}
@@ -899,11 +904,14 @@ export default function CompanyDepartmentSetupView({ companies, departments, ini
           departments={savedCompanyDepartments}
           positions={companyPositions}
           users={org.users}
+          ranks={org.ranks}
           defaultDeptId={selectedDeptKey && selectedDeptKey !== COMPANY_LEVEL_KEY ? selectedDeptKey : ""}
           onClose={() => setPositionModal(null)}
           onSaved={handlePositionSaved}
         />
       ) : null}
+
+      <RanksModal show={showRanks} ranks={org.ranks} onClose={() => setShowRanks(false)} onChanged={reloadOrg} />
     </main>
   );
 }

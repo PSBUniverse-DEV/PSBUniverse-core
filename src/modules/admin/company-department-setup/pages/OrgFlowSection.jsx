@@ -3,7 +3,7 @@
 import { useMemo, useState } from "react";
 import { Button, Input, Modal, StatusBadge } from "@/shared/components/ui";
 import { isSameId, isTempCompanyId, isTempDepartmentId } from "../data/companyDepartmentSetup.data.js";
-import { CHART_LEVELS, positionLabel } from "./PositionModal.jsx";
+import { positionLabel } from "./PositionModal.jsx";
 import styles from "./OrgFlowSection.module.css";
 
 // Department key for positions with no department (Company Head, etc.).
@@ -21,10 +21,6 @@ function batchMarker(bs) {
     updated: { t: "Edited", c: "psb-batch-marker psb-batch-marker-edited" },
   };
   return map[bs] || { t: "", c: "" };
-}
-
-function levelLabel(level) {
-  return CHART_LEVELS.find((l) => String(l.value) === String(level))?.label || "";
 }
 
 function shortNameOf(company) {
@@ -95,7 +91,7 @@ export default function OrgFlowSection({
   openDeactivateCompanyDialog, stageHardDeleteCompany, unstageHardDeleteCompany,
   openAddDepartmentDialog, openEditDepartmentDialog, openToggleDepartmentDialog,
   openDeactivateDepartmentDialog, stageHardDeleteDepartment, unstageHardDeleteDepartment,
-  allPositions = [], companyPositions = [], isPositionBusy = false,
+  allPositions = [], companyPositions = [], isPositionBusy = false, ranks = [],
   selectedDeptKey, onSelectDept, selectedPositionId, onSelectPosition,
   onAddPosition, onEditPosition, onTogglePosition, onDeletePosition, onRemovePerson, onMovePosition,
 }) {
@@ -103,6 +99,8 @@ export default function OrgFlowSection({
   const [confirmBox, setConfirmBox] = useState(null);
   const isBusy = Boolean(isSaving || isMutatingAction);
   const askConfirm = (title, message, label, onConfirm) => setConfirmBox({ title, message, label, onConfirm });
+  const rankNameById = useMemo(() => new Map(ranks.map((r) => [String(r.rank_id), r.rank_name])), [ranks]);
+  const levelLabel = (level) => rankNameById.get(String(level)) || "";
 
   const deptNameById = useMemo(
     () => new Map(decoratedDepartments.map((d) => [String(d.dept_id), d.dept_name])), [decoratedDepartments]);
@@ -141,7 +139,7 @@ export default function OrgFlowSection({
     const level = String(p.chart_level ?? "");
     let group = deptPositionGroups.find((g) => g.level === level);
     if (!group) {
-      group = { level, label: levelLabel(p.chart_level).replace(/^\d+\s*·\s*/, "") || "No rank", items: [] };
+      group = { level, label: levelLabel(p.chart_level) || "No rank", items: [] };
       deptPositionGroups.push(group);
     }
     group.items.push(p);
