@@ -50,13 +50,20 @@ export async function refreshUserSeats(supabase, userIds) {
       && activeCompIds.has(idKey(p.comp_id))
       && (p.dept_id == null || activeDeptIds.has(idKey(p.dept_id)));
 
-    // Active seats on active positions, highest on the chart first.
+    // Active seats on active positions, highest rank first (rank order from psb_s_rank).
+    const rankIds = [...new Set(positions.map((p) => p.chart_level).filter((v) => v != null))];
+    const { data: rankRows, error: rankError } = rankIds.length
+      ? await supabase.from("psb_s_rank").select("rank_id, rank_order").in("rank_id", rankIds)
+      : { data: [], error: null };
+    if (rankError) throw new Error(rankError.message);
+    const rankOrderOf = new Map((rankRows || []).map((r) => [idKey(r.rank_id), Number(r.rank_order) || 0]));
+    const rankOf = (p) => rankOrderOf.get(idKey(p?.chart_level)) ?? Number.MAX_SAFE_INTEGER;
     const usable = (seats || [])
       .filter((s) => isOpen(positionById.get(idKey(s.position_id))))
       .sort((a, b) => {
         const pa = positionById.get(idKey(a.position_id));
         const pb = positionById.get(idKey(b.position_id));
-        return (pa.chart_level ?? 9) - (pb.chart_level ?? 9) || (pa.display_order ?? 0) - (pb.display_order ?? 0);
+        return rankOf(pa) - rankOf(pb) || (pa.display_order ?? 0) - (pb.display_order ?? 0);
       });
 
     let main = usable.find((s) => s.is_primary) || null;

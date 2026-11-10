@@ -283,7 +283,7 @@ function userDisplayName(user) {
 /** Every position with its reporting lines and holders, plus active users for the people picker. */
 export async function loadOrgPositionsData() {
   const supabase = getSupabaseAdmin();
-  const [positionsRes, reportsRes, holdersRes, usersRes] = await Promise.all([
+  const [positionsRes, reportsRes, holdersRes, usersRes, ranksRes] = await Promise.all([
     supabase.from("psb_s_position").select("*")
       .order("chart_level", { ascending: true })
       .order("display_order", { ascending: true })
@@ -291,8 +291,11 @@ export async function loadOrgPositionsData() {
     supabase.from("psb_m_positionreport").select("position_id, reports_to_position_id"),
     supabase.from("psb_m_userposition").select("user_id, position_id, is_primary").eq("is_active", true),
     supabase.from("psb_s_user").select("user_id, username, email, first_name, last_name, is_active"),
+    supabase.from("psb_s_rank").select("rank_id, rank_name, rank_order, is_active")
+      .order("rank_order", { ascending: true })
+      .order("rank_name", { ascending: true }),
   ]);
-  const failed = positionsRes.error || reportsRes.error || holdersRes.error || usersRes.error;
+  const failed = positionsRes.error || reportsRes.error || holdersRes.error || usersRes.error || ranksRes.error;
   if (failed) throw new Error(failed.message || "Failed to load positions.");
 
   const users = (usersRes.data || [])
@@ -317,7 +320,22 @@ export async function loadOrgPositionsData() {
       .map((h) => ({ user_id: h.user_id, full_name: nameById.get(String(h.user_id)) || `User ${h.user_id}`, is_primary: Boolean(h.is_primary) })),
   }));
 
-  return { positions, users };
+  // Ranks (psb_s_rank), in order, with how many positions use each.
+  const ranks = (ranksRes.data || []).map((r) => ({
+    rank_id: r.rank_id,
+    rank_name: r.rank_name || "",
+    rank_order: r.rank_order,
+    is_active: r.is_active !== false,
+    position_count: positions.filter((p) => String(p.chart_level) === String(r.rank_id)).length,
+  }));
+  // Positions: rank order, then their order inside the rank (empty last), then name.
+  const rankIndex = new Map(ranks.map((r, i) => [String(r.rank_id), i]));
+  const rankPos = (p) => rankIndex.get(String(p.chart_level)) ?? Number.MAX_SAFE_INTEGER;
+  positions.sort((a, b) => rankPos(a) - rankPos(b)
+    || orderValue(a) - orderValue(b)
+    || String(a.position_name || "").localeCompare(String(b.position_name || "")));
+
+  return { positions, users, ranks };
 }
 
 /**
@@ -337,7 +355,7 @@ async function saveOrgPosition(input) {
   // Blank, "All" or "All branches" all mean every branch.
   const branchText = normalizeText(input?.branch);
   const branch = !branchText || /^all( branches)?$/i.test(branchText) ? null : branchText;
-  const chartLevel = Math.min(Math.max(toIdOrNull(input?.chart_level) ?? 4, 1), 9);
+  const chartLevel = toIdOrNull(input?.chart_level); // a psb_s_rank.rank_id
   const reportsToIds = [...new Set((input?.reports_to_ids || []).map(toIdOrNull).filter((id) => id != null))];
   const userIds = [...new Set((input?.user_ids || []).map(toIdOrNull).filter((id) => id != null))];
 
@@ -345,6 +363,13 @@ async function saveOrgPosition(input) {
   if (!name) throw new Error("Position name is required.");
   if (name.length > 100) throw new Error("Position name must be 100 characters or less.");
   if (branch && branch.length > 50) throw new Error("Branch must be 50 characters or less.");
+  if (!chartLevel) throw new Error("Pick a rank.");
+  {
+    const { data: rank, error: rankError } = await supabase.from("psb_s_rank")
+      .select("rank_id").eq("rank_id", chartLevel).maybeSingle();
+    if (rankError) throw new Error(rankError.message);
+    if (!rank) throw new Error("That rank no longer exists. Refresh the page.");
+  }
 
   if (deptId) {
     const { data: dept, error } = await supabase.from("psb_s_department").select("dept_id, comp_id").eq("dept_id", deptId).maybeSingle();
@@ -565,5 +590,108 @@ async function moveOrgPosition(positionId, direction) {
 
 export async function moveOrgPositionAction(positionId, direction) {
   return toPositionResult(() => moveOrgPosition(positionId, direction), "Failed to change the order.");
+}
+
+// ─── Ranks (psb_s_rank) ────────────────────────────────────
+// One list shared by every company; psb_s_position.chart_level holds the rank_id.
+// rank_order sorts positions. A disabled rank can't be picked for new positions,
+// but positions already using it keep it. A rank in use can't be deleted.
+
+async function loadRanksOrdered(supabase) {
+  const { data, error } = await supabase.from("psb_s_rank").select("rank_id, rank_name, rank_order, is_active")
+    .order("rank_order", { ascending: true }).order("rank_name", { ascending: true });
+  if (error) throw new Error(error.message);
+  return data || [];
+}
+
+/** Add (no rank_id) or rename a rank. input: { rank_id, rank_name } */
+async function saveRank(input) {
+  const supabase = getSupabaseAdmin();
+  const rankId = toIdOrNull(input?.rank_id);
+  const name = normalizeText(input?.rank_name);
+  if (!name) throw new Error("Rank name is required.");
+  if (name.length > 50) throw new Error("Rank name must be 50 characters or less.");
+  const ranks = await loadRanksOrdered(supabase);
+  const taken = ranks.some((r) => String(r.rank_id) !== String(rankId ?? "")
+    && String(r.rank_name || "").trim().toLowerCase() === name.toLowerCase());
+  if (taken) throw new Error(`There is already a rank called "${name}".`);
+
+  if (rankId) {
+    const { data, error } = await supabase.from("psb_s_rank")
+      .update({ rank_name: name, updated_at: new Date().toISOString() }).eq("rank_id", rankId).select("rank_id");
+    if (error) throw new Error(error.message || "Failed to save the rank.");
+    if (!data?.length) throw new Error("This rank no longer exists. Refresh the page.");
+    return { rank_id: rankId };
+  }
+  const nextOrder = ranks.reduce((max, r) => Math.max(max, Number(r.rank_order) || 0), 0) + 1;
+  const { data, error } = await supabase.from("psb_s_rank")
+    .insert({ rank_name: name, rank_order: nextOrder, is_active: true }).select("rank_id").single();
+  if (error) throw new Error(error.message || "Failed to add the rank.");
+  return { rank_id: data.rank_id };
+}
+
+async function setRankActive(rankId, isActive) {
+  const id = toIdOrNull(rankId);
+  if (!id) throw new Error("Rank is required.");
+  const supabase = getSupabaseAdmin();
+  if (!isActive) {
+    const ranks = await loadRanksOrdered(supabase);
+    const othersActive = ranks.filter((r) => r.is_active !== false && String(r.rank_id) !== String(id));
+    if (othersActive.length === 0) throw new Error("Keep at least one rank active.");
+  }
+  const { error } = await supabase.from("psb_s_rank")
+    .update({ is_active: Boolean(isActive), updated_at: new Date().toISOString() }).eq("rank_id", id);
+  if (error) throw new Error(error.message || "Failed to update the rank.");
+}
+
+async function deleteRank(rankId) {
+  const id = toIdOrNull(rankId);
+  if (!id) throw new Error("Rank is required.");
+  const supabase = getSupabaseAdmin();
+  const { count, error: countError } = await supabase.from("psb_s_position")
+    .select("position_id", { count: "exact", head: true }).eq("chart_level", id);
+  if (countError) throw new Error(countError.message);
+  if (count) {
+    throw new Error(`${count} position${count === 1 ? " uses" : "s use"} this rank. Move ${count === 1 ? "it" : "them"} to another rank first, or disable the rank instead.`);
+  }
+  const ranks = await loadRanksOrdered(supabase);
+  if (!ranks.some((r) => String(r.rank_id) !== String(id))) throw new Error("Keep at least one rank.");
+  const { error } = await supabase.from("psb_s_rank").delete().eq("rank_id", id);
+  if (error) throw new Error(error.message || "Failed to delete the rank.");
+}
+
+/** Move a rank one place up (-1) or down (+1); all ranks are renumbered 1..n. */
+async function moveRank(rankId, direction) {
+  const id = toIdOrNull(rankId);
+  if (!id) throw new Error("Rank is required.");
+  const step = Number(direction) < 0 ? -1 : 1;
+  const supabase = getSupabaseAdmin();
+  const ranks = await loadRanksOrdered(supabase);
+  const index = ranks.findIndex((r) => String(r.rank_id) === String(id));
+  const target = index + step;
+  if (index < 0 || target < 0 || target >= ranks.length) return;
+  const ordered = [...ranks];
+  [ordered[index], ordered[target]] = [ordered[target], ordered[index]];
+  for (let i = 0; i < ordered.length; i += 1) {
+    if (Number(ordered[i].rank_order) === i + 1) continue;
+    const { error } = await supabase.from("psb_s_rank").update({ rank_order: i + 1 }).eq("rank_id", ordered[i].rank_id);
+    if (error) throw new Error(error.message || "Failed to change the order.");
+  }
+}
+
+export async function saveRankAction(input) {
+  return toPositionResult(() => saveRank(input), "Failed to save the rank.");
+}
+
+export async function setRankActiveAction(rankId, isActive) {
+  return toPositionResult(() => setRankActive(rankId, isActive), "Failed to update the rank.");
+}
+
+export async function deleteRankAction(rankId) {
+  return toPositionResult(() => deleteRank(rankId), "Failed to delete the rank.");
+}
+
+export async function moveRankAction(rankId, direction) {
+  return toPositionResult(() => moveRank(rankId, direction), "Failed to change the order.");
 }
 

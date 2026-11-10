@@ -7,66 +7,78 @@ function displayName(user) {
   return name || user?.username || user?.email || `User ${user?.user_id}`;
 }
 
-function normalizeBranch(branch) {
-  if (branch == null) return "";
-  const text = String(branch).trim();
-  return text === "" || text.toLowerCase() === "all" ? "" : text;
+// "All" / "All branches" typed into a position's Branch means every branch.
+function normalizeBranch(value) {
+  const text = String(value ?? "").trim();
+  return /^all( branches)?$/i.test(text) ? "" : text;
+}
+
+function orderValue(row) {
+  const n = Number(row?.display_order);
+  return row?.display_order == null || !Number.isFinite(n) ? Number.MAX_SAFE_INTEGER : n;
 }
 
 /**
  * Everything the org chart needs, already filtered: active companies, and
  * active positions whose company and department (if any) are active, each
- * with its reporting lines and the active people sitting in it.
+ * with its reporting lines and the active people sitting in it. Positions
+ * come sorted by rank order (psb_s_rank), then order inside the rank, then name.
  */
 export async function loadOrgChartData() {
   const supabase = getSupabaseAdmin();
-  const [companiesRes, departmentsRes, positionsRes, reportsRes, seatsRes, usersRes] = await Promise.all([
+  const [companiesRes, departmentsRes, positionsRes, reportsRes, seatsRes, usersRes, ranksRes] = await Promise.all([
     supabase.from("psb_s_company").select("comp_id, comp_name, short_name").eq("is_active", true)
       .order("comp_name", { ascending: true }),
     supabase.from("psb_s_department").select("dept_id, comp_id, dept_name").eq("is_active", true),
     supabase.from("psb_s_position").select("position_id, comp_id, dept_id, position_name, branch, chart_level, display_order")
-      .eq("is_active", true)
-      .order("chart_level", { ascending: true })
-      .order("display_order", { ascending: true })
-      .order("position_name", { ascending: true }),
+      .eq("is_active", true),
     supabase.from("psb_m_positionreport").select("position_id, reports_to_position_id"),
-    supabase.from("psb_m_userposition").select("user_id, position_id").eq("is_active", true),
+    supabase.from("psb_m_userposition").select("user_id, position_id, is_primary").eq("is_active", true),
     supabase.from("psb_s_user").select("user_id, username, email, first_name, last_name").eq("is_active", true),
+    supabase.from("psb_s_rank").select("rank_id, rank_order"),
   ]);
   const failed = companiesRes.error || departmentsRes.error || positionsRes.error
-    || reportsRes.error || seatsRes.error || usersRes.error;
+    || reportsRes.error || seatsRes.error || usersRes.error || ranksRes.error;
   if (failed) throw new Error(failed.message || "Failed to load the org chart.");
 
   const companies = (companiesRes.data || []).map((c) => ({
     comp_id: c.comp_id,
-    label: c.short_name ? `${c.comp_name} (${c.short_name})` : c.comp_name,
+    comp_name: c.comp_name || "",
     short_name: c.short_name || "",
+    label: c.short_name ? `${c.comp_name} (${c.short_name})` : c.comp_name,
   }));
   const companyIds = new Set(companies.map((c) => String(c.comp_id)));
   const deptById = new Map((departmentsRes.data || []).map((d) => [String(d.dept_id), d]));
-  const nameByUserId = new Map((usersRes.data || []).map((u) => [String(u.user_id), displayName(u)]));
+  const userById = new Map((usersRes.data || []).map((u) => [String(u.user_id), { full_name: displayName(u), email: u.email || "" }]));
+  const rankOrderOf = new Map((ranksRes.data || []).map((r) => [String(r.rank_id), Number(r.rank_order) || 0]));
+  const rankOf = (p) => rankOrderOf.get(String(p.chart_level)) ?? Number.MAX_SAFE_INTEGER;
 
-  const visible = (positionsRes.data || []).filter((p) => {
-    if (!companyIds.has(String(p.comp_id))) return false;
-    if (p.dept_id == null) return true;
-    const dept = deptById.get(String(p.dept_id));
-    return Boolean(dept) && String(dept.comp_id) === String(p.comp_id);
-  });
+  const visible = (positionsRes.data || [])
+    .filter((p) => {
+      if (!companyIds.has(String(p.comp_id))) return false;
+      if (p.dept_id == null) return true;
+      const dept = deptById.get(String(p.dept_id));
+      return Boolean(dept) && String(dept.comp_id) === String(p.comp_id);
+    })
+    .sort((a, b) => rankOf(a) - rankOf(b)
+      || orderValue(a) - orderValue(b)
+      || String(a.position_name || "").localeCompare(String(b.position_name || "")));
   const visibleIds = new Set(visible.map((p) => String(p.position_id)));
 
   const positions = visible.map((p) => ({
     position_id: p.position_id,
     comp_id: p.comp_id,
-    position_name: p.position_name || "",
+    dept_id: p.dept_id,
     department_name: p.dept_id != null ? deptById.get(String(p.dept_id))?.dept_name || "" : "",
+    position_name: p.position_name || "",
     branch: normalizeBranch(p.branch),
     chart_level: p.chart_level,
     reports_to_ids: (reportsRes.data || [])
       .filter((r) => String(r.position_id) === String(p.position_id) && visibleIds.has(String(r.reports_to_position_id)))
       .map((r) => r.reports_to_position_id),
     people: (seatsRes.data || [])
-      .filter((s) => String(s.position_id) === String(p.position_id) && nameByUserId.has(String(s.user_id)))
-      .map((s) => ({ user_id: s.user_id, full_name: nameByUserId.get(String(s.user_id)) }))
+      .filter((s) => String(s.position_id) === String(p.position_id) && userById.has(String(s.user_id)))
+      .map((s) => ({ user_id: s.user_id, ...userById.get(String(s.user_id)), is_primary: Boolean(s.is_primary) }))
       .sort((a, b) => a.full_name.localeCompare(b.full_name, undefined, { sensitivity: "base" })),
   }));
 
