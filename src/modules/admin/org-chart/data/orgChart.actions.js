@@ -7,6 +7,12 @@ function displayName(user) {
   return name || user?.username || user?.email || `User ${user?.user_id}`;
 }
 
+function normalizeBranch(branch) {
+  if (branch == null) return "";
+  const text = String(branch).trim();
+  return text === "" || text.toLowerCase() === "all" ? "" : text;
+}
+
 /**
  * Everything the org chart needs, already filtered: active companies, and
  * active positions whose company and department (if any) are active, each
@@ -34,6 +40,7 @@ export async function loadOrgChartData() {
   const companies = (companiesRes.data || []).map((c) => ({
     comp_id: c.comp_id,
     label: c.short_name ? `${c.comp_name} (${c.short_name})` : c.comp_name,
+    short_name: c.short_name || "",
   }));
   const companyIds = new Set(companies.map((c) => String(c.comp_id)));
   const deptById = new Map((departmentsRes.data || []).map((d) => [String(d.dept_id), d]));
@@ -52,7 +59,7 @@ export async function loadOrgChartData() {
     comp_id: p.comp_id,
     position_name: p.position_name || "",
     department_name: p.dept_id != null ? deptById.get(String(p.dept_id))?.dept_name || "" : "",
-    branch: p.branch || "",
+    branch: normalizeBranch(p.branch),
     chart_level: p.chart_level,
     reports_to_ids: (reportsRes.data || [])
       .filter((r) => String(r.position_id) === String(p.position_id) && visibleIds.has(String(r.reports_to_position_id)))
