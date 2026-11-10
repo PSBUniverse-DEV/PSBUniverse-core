@@ -5,7 +5,7 @@ import { Button, Input, Modal, toastError } from "@/shared/components/ui";
 import { saveOrgPositionAction } from "../data/companyDepartmentSetup.actions.js";
 
 // Row on the org chart, top to bottom.
-const CHART_LEVELS = [
+export const CHART_LEVELS = [
   { value: 1, label: "1 · Head" },
   { value: 2, label: "2 · Lead" },
   { value: 3, label: "3 · Team Lead" },
@@ -26,10 +26,10 @@ export function positionLabel(position, departmentNameById) {
  * Add / Edit Position. Saves straight away (not part of Save Batch).
  * departments: the company's saved departments; positions: the company's positions.
  */
-export default function PositionModal({ company, position, departments, positions, users, onClose, onSaved }) {
+export default function PositionModal({ company, position, departments, positions, users, defaultDeptId = "", onClose, onSaved }) {
   const isEdit = Boolean(position?.position_id);
   const [name, setName] = useState(position?.position_name || "");
-  const [deptId, setDeptId] = useState(position?.dept_id != null ? String(position.dept_id) : "");
+  const [deptId, setDeptId] = useState(position?.dept_id != null ? String(position.dept_id) : String(defaultDeptId || ""));
   const [branch, setBranch] = useState(position?.branch || "");
   const [chartLevel, setChartLevel] = useState(String(position?.chart_level ?? 4));
   const [reportsTo, setReportsTo] = useState(() => (position?.reports_to_ids || []).map((id) => String(id)));
