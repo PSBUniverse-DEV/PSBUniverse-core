@@ -1,6 +1,7 @@
 "use server";
 
 import { getSupabaseAdmin } from "@/core/supabase/admin";
+import { requireUserMasterEditor } from "@/modules/admin/company-department-setup/data/orgAccess.server.js";
 import { refreshUserSeats } from "@/modules/admin/company-department-setup/data/orgSeats.server.js";
 
 // ─── Private helpers ───────────────────────────────────────
@@ -733,6 +734,7 @@ function toSeatId(value) {
 
 async function seatResult(work, fallback) {
   try {
+    await requireUserMasterEditor();
     const data = await work();
     return { success: true, ...(data && typeof data === "object" ? data : {}) };
   } catch (error) {
