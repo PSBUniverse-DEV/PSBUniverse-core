@@ -21,6 +21,9 @@ import {
 import PositionModal from "./PositionModal.jsx";
 import RanksModal from "./RanksModal.jsx";
 import OrgFlowSection, { COMPANY_LEVEL_KEY } from "./OrgFlowSection.jsx";
+import orgChartModule from "@/modules/admin/org-chart/index.js";
+
+const ORG_CHART_PATH = orgChartModule?.routes?.[0]?.path || "/admin/org-chart";
 
 // ═══════════════════════════════════════════════════════════
 //  HOOKS
@@ -653,7 +656,7 @@ function CompanyDeptHeader({
         <Button type="button" size="sm" variant="ghost"
           disabled={!hasPendingChanges || isSaving || isMutatingAction} onClick={handleCancelBatch}>Cancel Batch</Button>
         <Button type="button" size="sm" variant="secondary" onClick={onOpenRanks}>Ranks</Button>
-        <a href="/admin/org-chart" className="btn btn-sm btn-outline-primary">Org Chart</a>
+        <a href={ORG_CHART_PATH} className="btn btn-sm btn-outline-primary">Org Chart</a>
       </div>
     </div>
   );

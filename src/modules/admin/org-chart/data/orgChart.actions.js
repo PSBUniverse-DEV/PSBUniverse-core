@@ -1,7 +1,7 @@
 "use server";
 
 import { getSupabaseAdmin } from "@/core/supabase/admin";
-import { requireOrgChartViewer } from "@/modules/admin/company-department-setup/data/orgAccess.server.js";
+import { canEditOrg, requireOrgChartViewer } from "@/modules/admin/company-department-setup/data/orgAccess.server.js";
 
 function displayName(user) {
   const name = [user?.first_name, user?.last_name].filter(Boolean).join(" ").trim();
@@ -26,7 +26,7 @@ function orderValue(row) {
  * come sorted by rank order (psb_s_rank), then order inside the rank, then name.
  */
 export async function loadOrgChartData() {
-  await requireOrgChartViewer();
+  const session = await requireOrgChartViewer();
   const supabase = getSupabaseAdmin();
   const [companiesRes, departmentsRes, positionsRes, reportsRes, seatsRes, usersRes, ranksRes] = await Promise.all([
     supabase.from("psb_s_company").select("comp_id, comp_name, short_name").eq("is_active", true)
@@ -84,5 +84,5 @@ export async function loadOrgChartData() {
       .sort((a, b) => a.full_name.localeCompare(b.full_name, undefined, { sensitivity: "base" })),
   }));
 
-  return { companies, positions };
+  return { companies, positions, currentUserId: session.userId ?? null, canEdit: await canEditOrg() };
 }

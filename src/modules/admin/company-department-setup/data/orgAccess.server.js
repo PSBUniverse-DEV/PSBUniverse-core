@@ -4,7 +4,6 @@ import { getCurrentSession } from "@/core/auth/session.service";
 import { getSupabaseAdmin } from "@/core/supabase/admin";
 import companyDepartmentSetupModule from "../index.js";
 import userMasterSetupModule from "@/modules/admin/user-master-setup/index.js";
-import orgChartModule from "@/modules/admin/org-chart/index.js";
 
 // Who may use a page's server actions is decided in Card Module Setup, not in
 // code: a user needs an active role that is given an active card opening that
@@ -91,6 +90,16 @@ export async function requireUserMasterEditor() {
   return requirePageAccess(userMasterSetupModule);
 }
 
+/** Org Chart: any signed-in user may view it (read-only). Returns the session. */
 export async function requireOrgChartViewer() {
-  return requirePageAccess(orgChartModule);
+  const session = await getSession();
+  if (!session) throw new Error(ORG_SIGNED_OUT);
+  return session;
+}
+
+/** True when the signed-in user may use Organization Setup (to show its link). */
+export async function canEditOrg() {
+  const session = await getSession();
+  if (!session) return false;
+  return userCanOpenPage(session.userId, companyDepartmentSetupModule?.routes?.[0]?.path);
 }

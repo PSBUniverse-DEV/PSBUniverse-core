@@ -1,9 +1,12 @@
 "use client";
 
-import { useCallback, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import Link from "next/link";
 import { Button } from "@/shared/components/ui";
 import styles from "./OrgChartView.module.css";
+import companyDepartmentSetupModule from "@/modules/admin/company-department-setup/index.js";
+
+const ORG_SETUP_PATH = companyDepartmentSetupModule?.routes?.[0]?.path || "";
 
 const COMPANY_LEVEL = "company-level";
 // Company-level positions (Company Head, etc.) are amber; departments take the next colors in name order.
@@ -78,10 +81,23 @@ function VacantIcon({ size = 18 }) {
   );
 }
 
-export default function OrgChartView({ companies = [], positions = [], initialCompanyId = null }) {
-  const startId = companies.some((c) => String(c.comp_id) === String(initialCompanyId))
-    ? String(initialCompanyId)
-    : String(companies[0]?.comp_id ?? "");
+export default function OrgChartView({
+  companies = [], positions = [], initialCompanyId = null,
+  focusMe = false, currentUserId = null, canEdit = false,
+}) {
+  const mySeat = useMemo(() => {
+    if (!focusMe || currentUserId == null) return null;
+    const isMe = (person) => String(person.user_id) === String(currentUserId);
+    const mine = positions.filter((p) => (p.people || []).some(isMe));
+    const position = mine.find((p) => p.people.some((person) => isMe(person) && person.is_primary)) || mine[0];
+    return position ? { positionId: position.position_id, userId: currentUserId, compId: position.comp_id } : null;
+  }, [currentUserId, focusMe, positions]);
+
+  const startId = mySeat && companies.some((c) => String(c.comp_id) === String(mySeat.compId))
+    ? String(mySeat.compId)
+    : companies.some((c) => String(c.comp_id) === String(initialCompanyId))
+      ? String(initialCompanyId)
+      : String(companies[0]?.comp_id ?? "");
   const [companyId, setCompanyId] = useState(startId);
   const [branch, setBranch] = useState("");
   const [query, setQuery] = useState("");
@@ -124,6 +140,19 @@ export default function OrgChartView({ companies = [], positions = [], initialCo
   const q = query.trim().toLowerCase();
   const matches = (p) => !q || [p.position_name, p.department_name, ...p.people.map((x) => x.full_name)]
     .some((v) => String(v || "").toLowerCase().includes(q));
+
+  useEffect(() => {
+    if (!focusMe || !mySeat) return;
+    setCompanyId(String(mySeat.compId));
+    setSelected({ positionId: mySeat.positionId, userId: mySeat.userId });
+    setCollapsed(new Set());
+  }, [focusMe, mySeat]);
+
+  useEffect(() => {
+    if (!selected || !selected.positionId) return;
+    const element = document.querySelector(`[data-position-id="${String(selected.positionId)}"]`);
+    element?.scrollIntoView({ behavior: "smooth", block: "center" });
+  }, [selected]);
 
   const chooseCompany = (id) => {
     setCompanyId(String(id)); setBranch(""); setCollapsed(new Set()); setSelected(null);
@@ -209,7 +238,7 @@ export default function OrgChartView({ companies = [], positions = [], initialCo
     ].filter(Boolean).join(" ");
 
     return (
-      <div className={cls}>
+      <div className={cls} data-position-id={String(p.position_id)}>
         {people.length <= 1 ? (
           <button type="button" className={styles.cardMain} onClick={() => selectSeat(p, single?.user_id)}>
             {single ? (
@@ -281,8 +310,10 @@ export default function OrgChartView({ companies = [], positions = [], initialCo
           <h1 className="h4 mb-1">Org Chart</h1>
           <p className="text-muted mb-0">Who reports to whom. Click a person to see their details.</p>
         </div>
-        <Link href={companyId ? `/admin/company-department-setup?company=${companyId}` : "/admin/company-department-setup"}
-          className="btn btn-sm btn-outline-primary">Edit in Organization Setup</Link>
+        {canEdit ? (
+          <Link href={companyId ? `${ORG_SETUP_PATH}?company=${companyId}` : ORG_SETUP_PATH}
+            className="btn btn-sm btn-outline-primary">Edit in Organization Setup</Link>
+        ) : null}
       </div>
 
       {companies.length === 0 ? (
@@ -360,7 +391,11 @@ export default function OrgChartView({ companies = [], positions = [], initialCo
 
             <aside className={styles.panel} aria-label="Details">
               {!selectedPosition ? (
-                <div className={styles.panelEmpty}>Click a person on the chart to see who they report to and who reports to them.</div>
+                <div className={styles.panelEmpty}>
+                  {focusMe && currentUserId != null && !mySeat
+                    ? "You are not assigned to any active seat yet."
+                    : "Click a person on the chart to see who they report to and who reports to them."}
+                </div>
               ) : (
                 <>
                   <div className={styles.panelHead}>

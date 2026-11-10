@@ -5,10 +5,10 @@ export const dynamic = "force-dynamic";
 
 export default async function OrgChartPage({ searchParams }) {
   const resolvedSearchParams = await searchParams;
-  let companies, positions, error;
+  let companies, positions, currentUserId, canEdit, error;
 
   try {
-    ({ companies, positions } = await loadOrgChartData());
+    ({ companies, positions, currentUserId, canEdit } = await loadOrgChartData());
   } catch (e) {
     error = e;
   }
@@ -29,6 +29,9 @@ export default async function OrgChartPage({ searchParams }) {
       companies={companies}
       positions={positions}
       initialCompanyId={resolvedSearchParams?.company ?? null}
+      focusMe={resolvedSearchParams?.focus === "me"}
+      currentUserId={currentUserId ?? null}
+      canEdit={Boolean(canEdit)}
     />
   );
 }
