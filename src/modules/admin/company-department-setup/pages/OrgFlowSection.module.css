@@ -68,15 +68,21 @@
   font-size: 16px;
 }
 
+/* One screen: the columns take the height left under the header and the
+   steps strip (about 230px), all the same height; each list scrolls inside. */
 .flow {
   display: grid;
   grid-template-columns: minmax(220px, 260px) minmax(240px, 300px) minmax(260px, 320px) minmax(0, 1fr);
   gap: 14px;
-  align-items: start;
+  align-items: stretch;
+  height: calc(100vh - 230px);
+  min-height: 460px;
 }
 
+/* Stacked columns: back to normal height, lists capped so the page stays usable. */
 @media (max-width: 1199.98px) {
-  .flow { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+  .flow { grid-template-columns: repeat(2, minmax(0, 1fr)); height: auto; min-height: 0; }
+  .flow .columnBody { max-height: 420px; }
 }
 
 @media (max-width: 767.98px) {
@@ -87,6 +93,7 @@
   display: flex;
   flex-direction: column;
   min-width: 0;
+  min-height: 0;
   background: var(--psb-surface);
   border: 1px solid var(--psb-border);
   border-radius: 8px;
@@ -112,8 +119,9 @@
 .columnBody {
   display: flex;
   flex-direction: column;
+  flex: 1 1 auto;
   gap: 4px;
-  max-height: 560px;
+  min-height: 0;
   overflow-y: auto;
   padding: 8px;
 }
