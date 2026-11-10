@@ -1,0 +1,160 @@
+/* Org tree: nested lists, connector lines drawn with ::before / ::after. */
+.chart {
+  overflow-x: auto;
+  padding: 8px 0 16px;
+}
+
+.chart ul {
+  position: relative;
+  display: flex;
+  justify-content: center;
+  margin: 0;
+  padding: 20px 0 0;
+  list-style: none;
+}
+
+.chart > ul {
+  width: max-content;
+  min-width: 100%;
+  margin: 0 auto;
+}
+
+.chart li {
+  position: relative;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  padding: 20px 6px 0;
+}
+
+.chart li::before,
+.chart li::after {
+  content: "";
+  position: absolute;
+  top: 0;
+  right: 50%;
+  width: 50%;
+  height: 20px;
+  border-top: 2px solid var(--psb-border);
+}
+
+.chart li::after {
+  right: auto;
+  left: 50%;
+  border-left: 2px solid var(--psb-border);
+}
+
+.chart li:only-child::before,
+.chart li:only-child::after {
+  display: none;
+}
+
+.chart li:only-child {
+  padding-top: 0;
+}
+
+.chart li:first-child::before,
+.chart li:last-child::after {
+  border: 0 none;
+}
+
+.chart li:last-child::before {
+  border-right: 2px solid var(--psb-border);
+  border-radius: 0 6px 0 0;
+}
+
+.chart li:first-child::after {
+  border-radius: 6px 0 0 0;
+}
+
+.chart ul ul::before {
+  content: "";
+  position: absolute;
+  top: 0;
+  left: 50%;
+  width: 0;
+  height: 20px;
+  border-left: 2px solid var(--psb-border);
+}
+
+/* Top row: several heads side by side, no connector line above them. */
+.chart > ul.rootList {
+  padding-top: 0;
+  gap: 24px;
+}
+
+.chart > ul.rootList > li {
+  padding-top: 0;
+}
+
+.chart > ul.rootList > li::before,
+.chart > ul.rootList > li::after {
+  display: none;
+}
+
+.card {
+  display: inline-flex;
+  flex-direction: column;
+  gap: 6px;
+  min-width: 170px;
+  max-width: 240px;
+  padding: 8px 10px;
+  text-align: left;
+  background: var(--psb-surface);
+  border: 1px solid var(--psb-border);
+  border-top: 3px solid var(--psb-brand);
+  border-radius: 8px;
+}
+
+.cardHead {
+  border-top-color: var(--psb-gold);
+}
+
+.positionName {
+  font-size: 13px;
+  font-weight: 700;
+  color: var(--psb-ink);
+}
+
+.positionMeta {
+  font-size: 11px;
+  color: var(--psb-muted);
+}
+
+.person {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 13px;
+  color: var(--psb-text);
+}
+
+.avatar {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  flex-shrink: 0;
+  width: 24px;
+  height: 24px;
+  border-radius: 50%;
+  background: var(--psb-brand);
+  color: #ffffff;
+  font-size: 10px;
+  font-weight: 700;
+}
+
+.vacant {
+  font-size: 12px;
+  font-style: italic;
+  color: var(--psb-muted);
+}
+
+.alsoTag {
+  align-self: flex-start;
+  padding: 1px 8px;
+  border-radius: 999px;
+  background: var(--psb-bg);
+  color: var(--psb-muted);
+  font-size: 11px;
+  font-weight: 600;
+}
