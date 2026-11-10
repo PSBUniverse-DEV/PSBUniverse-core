@@ -1,6 +1,7 @@
 "use server";
 
 import { getSupabaseAdmin } from "@/core/supabase/admin";
+import { refreshUserSeats } from "./orgSeats.server.js";
 
 // ─── Private helpers ───────────────────────────────────────
 
@@ -284,17 +285,6 @@ export async function loadOrgPositionsData() {
   return { positions, users };
 }
 
-// Users who lost their main seat get another of their active seats as main.
-async function promoteMainSeats(supabase, userIds) {
-  for (const userId of userIds) {
-    const { data: seats } = await supabase.from("psb_m_userposition")
-      .select("position_id, is_primary").eq("user_id", userId).eq("is_active", true);
-    if (!seats?.length || seats.some((s) => s.is_primary)) continue;
-    await supabase.from("psb_m_userposition").update({ is_primary: true })
-      .eq("user_id", userId).eq("position_id", seats[0].position_id);
-  }
-}
-
 /**
  * Create (no position_id) or update a position, and replace its reporting
  * lines and holders.
@@ -392,7 +382,6 @@ async function saveOrgPosition(input) {
     const { error } = await supabase.from("psb_m_userposition").delete()
       .eq("position_id", savedId).in("user_id", toRemove.map((r) => r.user_id));
     if (error) throw new Error(error.message);
-    await promoteMainSeats(supabase, toRemove.filter((r) => r.is_primary).map((r) => r.user_id));
   }
   if (toAdd.length) {
     const { data: mains } = await supabase.from("psb_m_userposition").select("user_id")
@@ -404,6 +393,12 @@ async function saveOrgPosition(input) {
     if (error) throw new Error(error.message || "Saved the position, but not its people. Save again.");
   }
 
+  const affectedUserIds = [...new Set([
+    ...currentRows.map((r) => r.user_id),
+    ...userIds,
+  ].map((id) => String(id)).filter(Boolean))];
+  await refreshUserSeats(supabase, affectedUserIds);
+
   return { position_id: savedId };
 }
 
@@ -411,9 +406,11 @@ async function setOrgPositionActive(positionId, isActive) {
   const id = toIdOrNull(positionId);
   if (!id) throw new Error("Position is required.");
   const supabase = getSupabaseAdmin();
+  const { data: holders } = await supabase.from("psb_m_userposition").select("user_id").eq("position_id", id);
   const { error } = await supabase.from("psb_s_position")
     .update({ is_active: Boolean(isActive), updated_at: new Date().toISOString() }).eq("position_id", id);
   if (error) throw new Error(error.message || "Failed to update the position.");
+  await refreshUserSeats(supabase, (holders || []).map((h) => h.user_id));
   return { success: true };
 }
 
@@ -425,7 +422,7 @@ async function deleteOrgPosition(positionId) {
   const { data: holders } = await supabase.from("psb_m_userposition").select("user_id, is_primary").eq("position_id", id);
   const { error } = await supabase.from("psb_s_position").delete().eq("position_id", id);
   if (error) throw new Error(error.message || "Failed to delete the position.");
-  await promoteMainSeats(supabase, (holders || []).filter((h) => h.is_primary).map((h) => h.user_id));
+  await refreshUserSeats(supabase, (holders || []).map((h) => h.user_id));
   return { success: true };
 }
 
