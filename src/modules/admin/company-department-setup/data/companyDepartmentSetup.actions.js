@@ -189,6 +189,16 @@ export async function saveCompanyDepartmentBatch(companyChanges, departmentChang
     [...(departments.deactivations || []), ...(departments.hardDeletes || [])].map((id) => String(id ?? "")),
   );
 
+  // People seated in a company or department this batch touches. Read before
+  // the changes (a delete may remove their seats), refreshed after them.
+  const touchedCompanyIds = [
+    ...Object.keys(companies.updates || {}), ...(companies.deactivations || []), ...(companies.hardDeletes || []),
+  ].filter((id) => !isTempCompany(id)).map(toIdOrNull).filter((id) => id != null);
+  const touchedDepartmentIds = [
+    ...Object.keys(departments.updates || {}), ...(departments.deactivations || []), ...(departments.hardDeletes || []),
+  ].filter((id) => !isTempDepartment(id)).map(toIdOrNull).filter((id) => id != null);
+  const seatedUserIds = await seatedUsersIn(touchedCompanyIds, touchedDepartmentIds);
+
   await Promise.all((companies.creates || []).map(async (entry) => {
     const created = await createCompanyAction(entry.payload);
     const id = created?.comp_id;
@@ -231,7 +241,25 @@ export async function saveCompanyDepartmentBatch(companyChanges, departmentChang
     await hardDeleteCompanyAction(resolved);
   }));
 
+  await refreshUserSeats(getSupabaseAdmin(), seatedUserIds);
+
   return { companyIdMap };
+}
+
+// User ids holding a seat in any position of these companies or departments.
+async function seatedUsersIn(companyIds, departmentIds) {
+  if (!companyIds.length && !departmentIds.length) return [];
+  const supabase = getSupabaseAdmin();
+  const filters = [];
+  if (companyIds.length) filters.push(`comp_id.in.(${companyIds.join(",")})`);
+  if (departmentIds.length) filters.push(`dept_id.in.(${departmentIds.join(",")})`);
+  const { data: positions, error } = await supabase.from("psb_s_position").select("position_id").or(filters.join(","));
+  if (error) throw new Error(error.message);
+  if (!positions?.length) return [];
+  const { data: seats, error: seatsError } = await supabase.from("psb_m_userposition")
+    .select("user_id").in("position_id", positions.map((p) => p.position_id));
+  if (seatsError) throw new Error(seatsError.message);
+  return [...new Set((seats || []).map((s) => String(s.user_id)))];
 }
 
 // ─── Organization: positions ───────────────────────────────
@@ -262,15 +290,20 @@ export async function loadOrgPositionsData() {
       .order("position_name", { ascending: true }),
     supabase.from("psb_m_positionreport").select("position_id, reports_to_position_id"),
     supabase.from("psb_m_userposition").select("user_id, position_id, is_primary").eq("is_active", true),
-    supabase.from("psb_s_user").select("user_id, username, email, first_name, last_name").eq("is_active", true),
+    supabase.from("psb_s_user").select("user_id, username, email, first_name, last_name, is_active"),
   ]);
   const failed = positionsRes.error || reportsRes.error || holdersRes.error || usersRes.error;
   if (failed) throw new Error(failed.message || "Failed to load positions.");
 
   const users = (usersRes.data || [])
+    .filter((u) => u.is_active !== false)
     .map((u) => ({ user_id: u.user_id, full_name: userDisplayName(u), username: u.username || "", email: u.email || "" }))
     .sort((a, b) => a.full_name.localeCompare(b.full_name, undefined, { sensitivity: "base" }));
-  const nameById = new Map(users.map((u) => [String(u.user_id), u.full_name]));
+  // Holders may include deactivated people: show their name, marked "(inactive)".
+  const nameById = new Map((usersRes.data || []).map((u) => [
+    String(u.user_id),
+    u.is_active === false ? `${userDisplayName(u)} (inactive)` : userDisplayName(u),
+  ]));
 
   const positions = (positionsRes.data || []).map((p) => ({
     ...p,

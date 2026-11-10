@@ -32,9 +32,27 @@ export async function refreshUserSeats(supabase, userIds) {
     }
     const positionById = new Map(positions.map((p) => [idKey(p.position_id), p]));
 
+    // A seat only counts when its position, company and department (if any) are all active.
+    const compIds = [...new Set(positions.map((p) => p.comp_id).filter((v) => v != null))];
+    const deptIds = [...new Set(positions.map((p) => p.dept_id).filter((v) => v != null))];
+    const [compRes, deptRes] = await Promise.all([
+      compIds.length
+        ? supabase.from("psb_s_company").select("comp_id, is_active").in("comp_id", compIds)
+        : Promise.resolve({ data: [], error: null }),
+      deptIds.length
+        ? supabase.from("psb_s_department").select("dept_id, is_active").in("dept_id", deptIds)
+        : Promise.resolve({ data: [], error: null }),
+    ]);
+    if (compRes.error || deptRes.error) throw new Error((compRes.error || deptRes.error).message);
+    const activeCompIds = new Set((compRes.data || []).filter((c) => c.is_active !== false).map((c) => idKey(c.comp_id)));
+    const activeDeptIds = new Set((deptRes.data || []).filter((d) => d.is_active !== false).map((d) => idKey(d.dept_id)));
+    const isOpen = (p) => Boolean(p?.is_active)
+      && activeCompIds.has(idKey(p.comp_id))
+      && (p.dept_id == null || activeDeptIds.has(idKey(p.dept_id)));
+
     // Active seats on active positions, highest on the chart first.
     const usable = (seats || [])
-      .filter((s) => positionById.get(idKey(s.position_id))?.is_active)
+      .filter((s) => isOpen(positionById.get(idKey(s.position_id))))
       .sort((a, b) => {
         const pa = positionById.get(idKey(a.position_id));
         const pb = positionById.get(idKey(b.position_id));
