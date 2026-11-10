@@ -15,7 +15,7 @@ import {
 
 export const TABS = [
   { key: "profile", label: "Profile", description: "Core identity and contact details for the selected user." },
-  { key: "organization", label: "Organization", description: "Company assignment, department hierarchy, position, and workflow status." },
+  { key: "organization", label: "Organization", description: "Seats (positions held in any company), hire date and status." },
   { key: "access", label: "Access", description: "Application and role mappings for what the user can access." },
   { key: "account", label: "Account", description: "Authentication account controls and last login activity." },
 ];
