@@ -30,12 +30,14 @@ function normalizeBoolean(value) {
   return !(text === "false" || text === "0" || text === "n" || text === "no" || text === "f");
 }
 
-const PROTECTED_APP_NAMES = ["PSBUNIVERSE"];
+// The core app can't be deleted or deactivated. It's found by its module_key
+// (from this module's settings), not its name, so renaming the app is safe.
+const CORE_MODULE_KEY = normalizeText(applicationSetupModule?.module_key).toLowerCase();
 
 async function isProtectedApp(supabase, appId) {
-  const { data } = await supabase.from("psb_s_application").select("app_name").eq("app_id", appId).maybeSingle();
-  const name = normalizeText(data?.app_name).toUpperCase();
-  return PROTECTED_APP_NAMES.includes(name);
+  const { data } = await supabase.from("psb_s_application").select("module_key").eq("app_id", appId).maybeSingle();
+  const moduleKey = normalizeText(data?.module_key).toLowerCase();
+  return Boolean(CORE_MODULE_KEY) && moduleKey === CORE_MODULE_KEY;
 }
 
 const ORDER_FIELD_CANDIDATES = ["display_order", "app_order", "sort_order", "order_no"];

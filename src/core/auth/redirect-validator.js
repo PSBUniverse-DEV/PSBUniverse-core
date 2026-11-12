@@ -117,7 +117,7 @@ export function validateRedirectUrl(redirectUrl, fallbackUrl = "/dashboard") {
  * @returns {string} Login URL with optional redirect parameter
  */
 export function buildLoginUrl(returnPath) {
-  const loginUrl = new URL("/login", CORE_PORTAL_URL);
+  const loginUrl = new URL(LOGIN_SHORT_PATH, CORE_PORTAL_URL);
 
   if (returnPath) {
     const safeRedirect = validateRedirectUrl(returnPath);

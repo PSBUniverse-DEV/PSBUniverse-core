@@ -1,12 +1,12 @@
 import { NextResponse } from "next/server";
 import { isLoginPath, LOGIN_SHORT_PATH } from "@/core/auth/redirect-validator";
+import { SSO_ENABLED } from "@/core/sso-client";
 import { parentPathOf, routePathOf } from "@/core/routes.js";
 import dealerPortalModule from "@/modules/dealer/index.js";
 
 // Dealer portal addresses come from its module (src/modules/dealer/index.js).
 const DEALER_LOGIN_PATH = routePathOf(dealerPortalModule, "DealerLoginPage");
 const DEALER_BASE_PATH = parentPathOf(DEALER_LOGIN_PATH);
-import { SSO_ENABLED } from "@/core/sso-client";
 
 /**
  * SSO Proxy Middleware for PSBUniverse
