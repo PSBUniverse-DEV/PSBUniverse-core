@@ -744,6 +744,8 @@ function toSeatId(value) {
 
 async function seatResult(work, fallback) {
   try {
+    // Inside the try, so "no access" comes back as a readable error.
+    await requireUserMasterEditor();
     const data = await work();
     return { success: true, ...(data && typeof data === "object" ? data : {}) };
   } catch (error) {

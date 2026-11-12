@@ -86,6 +86,12 @@ export async function requirePageAccess(pageModule) {
   return session;
 }
 
+/** True when the given user may open pageModule's page (e.g. the dealer portal's staff view). */
+export async function userIdCanOpenPage(userId, pageModule) {
+  if (!userId) return false;
+  return userCanOpenPage(userId, pageModule?.routes?.[0]?.path);
+}
+
 /** True when the signed-in user may open pageModule's page (for showing links). */
 export async function canOpenPage(pageModule) {
   const session = await getSession();
