@@ -57,7 +57,7 @@ function PreviewCard({ title, subtitle, vacant = false, current = false }) {
 }
 
 /**
- * Add / Edit Position. Saves straight away (not part of Save Batch).
+ * Add / Edit Position. Saves straight away.
  * departments: the company's saved departments; positions: the company's positions.
  */
 export default function PositionModal({ company, position, departments, positions, users, ranks = [], defaultDeptId = "", onClose, onSaved }) {
@@ -170,7 +170,7 @@ export default function PositionModal({ company, position, departments, position
 
   const footer = (
     <div className={styles.footer}>
-      <span className={styles.hint}>Saves straight away. No Save Batch needed.</span>
+      <span className={styles.hint}>Saves straight away.</span>
       <div className="d-flex gap-2">
         <Button type="button" variant="ghost" onClick={onClose} disabled={isSaving}>Cancel</Button>
         <Button type="button" variant="primary" onClick={handleSave} loading={isSaving}>{isEdit ? "Save" : "Add Position"}</Button>
