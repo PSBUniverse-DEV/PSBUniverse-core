@@ -476,16 +476,24 @@ export default function CompanyDepartmentSetupView({ companies, departments, ini
     () => org.positions.filter((p) => isSameId(p?.comp_id, h.selectedCompany?.comp_id)),
     [h.selectedCompany?.comp_id, org.positions]);
 
+  // Returns true when the change saved. Uses the fresh data the action sends
+  // back (one round trip); falls back to a reload for actions that don't.
   const runPositionChange = useCallback(async (work, message) => {
-    if (isPositionBusy) return;
+    if (isPositionBusy) return false;
     setIsPositionBusy(true);
     try {
       const result = await work();
       if (result && result.success === false) throw new Error(result.error || "Failed to update the position.");
-      await reloadOrg();
+      if (result?.org) {
+        setOrg({ positions: result.org.positions || [], users: result.org.users || [], ranks: result.org.ranks || [] });
+      } else {
+        await reloadOrg();
+      }
       toastSuccess(message, "Positions");
+      return true;
     } catch (error) {
       toastError(error?.message || "Failed to update the position.");
+      return false;
     } finally {
       setIsPositionBusy(false);
     }
@@ -498,7 +506,7 @@ export default function CompanyDepartmentSetupView({ companies, departments, ini
   }, [reloadOrg]);
 return (
     <main className="container-fluid py-4 px-3 px-lg-4">
-      <CompanyDeptHeader isBusy={h.isBusy} onOpenRanks={() => setShowRanks(true)} />
+      <CompanyDeptHeader isBusy={h.isBusy || isPositionBusy} onOpenRanks={() => setShowRanks(true)} />
 
       <OrgFlowSection
         decoratedCompanies={h.companies} decoratedDepartments={h.departments}
@@ -531,8 +539,11 @@ return (
         onTogglePosition={(row, nextActive) => runPositionChange(
           () => setOrgPositionActiveAction(row.position_id, nextActive),
           nextActive ? "Position restored." : "Position deactivated.")}
-        onDeletePosition={(row) => runPositionChange(
-          () => deleteOrgPositionAction(row.position_id), "Position deleted.")}
+        onDeletePosition={async (row) => {
+          const deleted = await runPositionChange(
+            () => deleteOrgPositionAction(row.position_id), "Position deleted.");
+          if (deleted && isSameId(selectedPositionId, row.position_id)) setSelectedPositionId(null);
+        }}
         onMovePosition={(row, direction) => runPositionChange(
           () => moveOrgPositionAction(row.position_id, direction), "Order updated.")}
         onRemovePerson={(row, userId) => runPositionChange(

@@ -15,6 +15,17 @@ function hasOwn(source, key) {
   return Object.prototype.hasOwnProperty.call(source || {}, key);
 }
 
+// Postgres 23503 = the row is still used by another table (a foreign key).
+// The last `on table "…"` in the message names the table that uses it.
+function inUseError(error, what, fallback) {
+  if (error?.code === "23503") {
+    const tables = [...String(error.message || "").matchAll(/on table "([^"]+)"/g)].map((m) => m[1]);
+    const usedBy = tables.length > 1 ? tables[tables.length - 1] : "";
+    return new Error(`${what} is still used${usedBy ? ` in ${usedBy}` : " by other records"}, so it can't be deleted. Deactivate it instead.`);
+  }
+  return new Error(error?.message || fallback);
+}
+
 // ─── Load data ─────────────────────────────────────────────
 
 export async function loadCompanyDepartmentSetupData() {
@@ -108,12 +119,17 @@ async function hardDeleteCompany(companyId) {
     throw new Error(`This company still has ${positionCount} position(s). Delete them first, or deactivate the company instead.`);
   }
 
-  // Its departments are deleted with it (one query).
-  const { error: deptError } = await supabase.from("psb_s_department").delete().eq("comp_id", companyId);
-  if (deptError) throw new Error(deptError.message || "Failed to delete the company's departments");
+  // Departments are deleted one by one first (each delete is all-or-nothing),
+  // so a company delete that fails never leaves the company half removed.
+  const { count: deptCount, error: deptError } = await supabase.from("psb_s_department")
+    .select("dept_id", { count: "exact", head: true }).eq("comp_id", companyId);
+  if (deptError) throw new Error(deptError.message || "Failed to check departments");
+  if (deptCount > 0) {
+    throw new Error(`This company still has ${deptCount} department(s). Delete them first, or deactivate the company instead.`);
+  }
 
   const { error } = await supabase.from("psb_s_company").delete().eq("comp_id", companyId);
-  if (error) throw new Error(error.message || "Failed to permanently delete company");
+  if (error) throw inUseError(error, "This company", "Failed to permanently delete company");
 }
 
 // ─── Department Actions ────────────────────────────────────
@@ -176,7 +192,7 @@ async function hardDeleteDepartment(departmentId) {
   }
 
   const { error } = await supabase.from("psb_s_department").delete().eq("dept_id", departmentId);
-  if (error) throw new Error(error.message || "Failed to permanently delete department");
+  if (error) throw inUseError(error, "This department", "Failed to permanently delete department");
   return { departmentId, permanentlyDeleted: true };
 }
 
@@ -308,6 +324,11 @@ function userDisplayName(user) {
 /** Every position with its reporting lines and holders, plus active users for the people picker. */
 export async function loadOrgPositionsData() {
   await requireOrgEditor();
+  return readOrgPositionsData();
+}
+
+// Same data without the access check, for actions that already checked it.
+async function readOrgPositionsData() {
   const supabase = getSupabaseAdmin();
   const [positionsRes, reportsRes, holdersRes, usersRes, ranksRes] = await Promise.all([
     supabase.from("psb_s_position").select("*")
@@ -563,12 +584,19 @@ export async function saveOrgPositionAction(input) {
   return toPositionResult(() => saveOrgPosition(input), "Failed to save the position.");
 }
 
+// Position changes send back the fresh positions, users and ranks as `org` in
+// the same call, so the screen updates without a second round trip.
+async function withOrg(work) {
+  await work();
+  return { org: await readOrgPositionsData() };
+}
+
 export async function setOrgPositionActiveAction(positionId, isActive) {
-  return toPositionResult(() => setOrgPositionActive(positionId, isActive), "Failed to update the position.");
+  return toPositionResult(() => withOrg(() => setOrgPositionActive(positionId, isActive)), "Failed to update the position.");
 }
 
 export async function deleteOrgPositionAction(positionId) {
-  return toPositionResult(() => deleteOrgPosition(positionId), "Failed to delete the position.");
+  return toPositionResult(() => withOrg(() => deleteOrgPosition(positionId)), "Failed to delete the position.");
 }
 
 // ─── Position order inside a group ─────────────────────────
@@ -635,7 +663,7 @@ async function moveOrgPosition(positionId, direction) {
 }
 
 export async function moveOrgPositionAction(positionId, direction) {
-  return toPositionResult(() => moveOrgPosition(positionId, direction), "Failed to change the order.");
+  return toPositionResult(() => withOrg(() => moveOrgPosition(positionId, direction)), "Failed to change the order.");
 }
 
 // ─── Ranks (psb_s_rank) ────────────────────────────────────

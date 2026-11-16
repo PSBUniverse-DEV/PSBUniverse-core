@@ -171,7 +171,7 @@ export default function OrgFlowSection({
                 onRestore={openToggleCompanyDialog}
                 onDeactivate={openDeactivateCompanyDialog}
                 onDelete={(row) => askConfirm("Delete Company",
-                  `Permanently delete ${row?.comp_name || "this company"} and its departments? This cannot be undone. A company that still has positions cannot be deleted.`,
+                  `Permanently delete ${row?.comp_name || "this company"}? This cannot be undone. Delete its positions and departments first; a company still in use elsewhere can only be deactivated.`,
                   "Delete Company", () => deleteCompany(row))}
               />
               <Button type="button" size="sm" variant="success" className="w-100" disabled={isBusy} onClick={openAddCompanyDialog}>
