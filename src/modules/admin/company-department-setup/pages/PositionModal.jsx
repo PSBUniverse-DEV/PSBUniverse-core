@@ -103,7 +103,7 @@ export default function PositionModal({ company, position, departments, position
     const groups = new Map();
     otherPositions.forEach((p) => {
       const deptName = p.dept_id != null ? deptNameById.get(String(p.dept_id)) || "Department" : "Company-level";
-      if (q && ![p.position_name, deptName, peopleOf(p)].some((v) => String(v || "").toLowerCase().includes(q))) return;
+      if (q && ![p.position_name, p.position_code, deptName, peopleOf(p)].some((v) => String(v || "").toLowerCase().includes(q))) return;
       const key = p.dept_id != null ? String(p.dept_id) : "";
       if (!groups.has(key)) groups.set(key, { key, name: deptName, items: [] });
       groups.get(key).items.push(p);
@@ -290,7 +290,7 @@ export default function PositionModal({ company, position, departments, position
               <label className={styles.searchRow}>
                 <SearchIcon />
                 <input type="search" value={reportSearch} onChange={(e) => setReportSearch(e.target.value)}
-                  placeholder="Search positions or people" aria-label="Search positions or people" />
+                  placeholder="Search positions, people or codes" aria-label="Search positions, people or codes" />
               </label>
               <div className={styles.listScroll}>
                 {reportGroups.length === 0 ? (

@@ -98,7 +98,7 @@ export default function OrgFlowSection({
   const visibleDepartments = useMemo(() => {
     const q = deptSearch.trim().toLowerCase();
     if (!q) return decoratedDepartments;
-    return decoratedDepartments.filter((d) => [d.dept_name, d.dept_short_name]
+    return decoratedDepartments.filter((d) => [d.dept_name, d.dept_short_name, d.dept_code]
       .some((v) => String(v || "").toLowerCase().includes(q)));
   }, [decoratedDepartments, deptSearch]);
 
@@ -182,7 +182,7 @@ export default function OrgFlowSection({
         >
           {decoratedCompanies.length === 0 ? <Hint>No companies yet.</Hint> : decoratedCompanies.map((c) => {
             const active = isSameId(c.comp_id, selectedCompany?.comp_id);
-            const meta = [shortNameOf(c), `${positionCountByCompany.get(String(c.comp_id)) || 0} positions`].filter(Boolean).join(" · ");
+            const meta = [c.comp_code, shortNameOf(c), `${positionCountByCompany.get(String(c.comp_id)) || 0} positions`].filter(Boolean).join(" · ");
             return (
               <button key={String(c.comp_id)} type="button" aria-pressed={active} disabled={isBusy}
                 className={`${styles.item} ${active ? styles.itemActive : ""}`} onClick={() => onSelectCompany(c)}>
@@ -232,7 +232,9 @@ export default function OrgFlowSection({
                 return (
                   <button key={String(d.dept_id)} type="button" aria-pressed={active}
                     className={`${styles.item} ${active ? styles.itemActive : ""}`} onClick={() => onSelectDept(String(d.dept_id))}>
-                    <span className={styles.itemName}>{d.dept_name}</span>
+                    <span className={styles.itemName}>
+                      {d.dept_name}{d.dept_code ? <span className="text-muted small fw-normal ms-1">{d.dept_code}</span> : null}
+                    </span>
                     <span className="d-flex align-items-center gap-1">
                       <RowMarker row={d} />
                       <span className={styles.count}>{positionCountByDept.get(String(d.dept_id)) || 0}</span>
@@ -268,7 +270,10 @@ export default function OrgFlowSection({
                           className={`${styles.item} ${styles.positionCard} ${active ? styles.itemActive : ""}`}
                           onClick={() => onSelectPosition(p.position_id)}>
                           <span className={styles.cardTop}>
-                            <span className={styles.itemName}>{p.position_name}{p.branch ? ` (${p.branch})` : ""}</span>
+                            <span className={styles.itemName}>
+                              {p.position_name}{p.branch ? ` (${p.branch})` : ""}
+                              {p.position_code ? <span className="text-muted small fw-normal ms-1">{p.position_code}</span> : null}
+                            </span>
                             {!p.is_active ? <StatusBadge status="inactive" /> : null}
                           </span>
                           <span className={styles.itemMeta}>{reportsTo ? `Reports to ${reportsTo}` : "Top of the chart"}</span>
@@ -295,7 +300,7 @@ export default function OrgFlowSection({
                 <div>
                   <h2 className={styles.detailTitle}>{selectedPosition.position_name}</h2>
                   <div className={styles.itemMeta}>
-                    {[selectedCompany?.comp_name, deptLabel, selectedPosition.branch || "All branches", levelLabel(selectedPosition.chart_level)]
+                    {[selectedPosition.position_code, selectedCompany?.comp_name, deptLabel, selectedPosition.branch || "All branches", levelLabel(selectedPosition.chart_level)]
                       .filter(Boolean).join(" · ")}
                   </div>
                 </div>

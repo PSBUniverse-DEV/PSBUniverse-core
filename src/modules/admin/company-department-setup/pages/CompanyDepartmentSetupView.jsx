@@ -387,6 +387,11 @@ function CompanyDeptDialog({
     <Modal show onHide={closeDialog} title={dialogTitle} footer={footer}>
       {isCompanyForm ? (
         <div className="d-flex flex-column gap-3">
+          <div className="small text-muted">
+            {kind === "edit-company" && dialog?.target?.comp_code
+              ? <>Code <strong>{dialog.target.comp_code}</strong>, given automatically and can&apos;t be changed.</>
+              : "A company code is given automatically when you save."}
+          </div>
           <div>
             <label className="form-label mb-1">Company Name</label>
             <Input value={companyDraft.name} onChange={(e) => setCompanyDraft((p) => ({ ...p, name: e.target.value }))} placeholder="Enter company name" autoFocus />
@@ -410,6 +415,11 @@ function CompanyDeptDialog({
           {kind === "add-department" ? (
             <div className="small text-muted">Creating department for <strong>{dialog?.target?.comp_name || "selected company"}</strong></div>
           ) : null}
+          <div className="small text-muted">
+            {kind === "edit-department" && dialog?.target?.dept_code
+              ? <>Code <strong>{dialog.target.dept_code}</strong>, given automatically and can&apos;t be changed.</>
+              : "A department code is given automatically when you save."}
+          </div>
           <div>
             <label className="form-label mb-1">Department Name</label>
             <Input value={departmentDraft.name} onChange={(e) => setDepartmentDraft((p) => ({ ...p, name: e.target.value }))} placeholder="Enter department name" autoFocus />

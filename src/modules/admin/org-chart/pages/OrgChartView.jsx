@@ -138,7 +138,7 @@ export default function OrgChartView({
   const colorOf = (p) => (String(p?.comp_id) === companyId ? colors.map.get(deptKeyOf(p)) : null) || NEUTRAL_COLOR;
 
   const q = query.trim().toLowerCase();
-  const matches = (p) => !q || [p.position_name, p.department_name, ...p.people.map((x) => x.full_name)]
+  const matches = (p) => !q || [p.position_name, p.position_code, p.department_name, p.department_code, ...p.people.map((x) => x.full_name)]
     .some((v) => String(v || "").toLowerCase().includes(q));
 
   useEffect(() => {
@@ -348,7 +348,7 @@ export default function OrgChartView({
                 <circle cx="11" cy="11" r="7" /><path d="m20 20-3.5-3.5" />
               </svg>
               <input type="search" value={query} onChange={(e) => setQuery(e.target.value)}
-                placeholder="Find a person or position" aria-label="Find a person or position" />
+                placeholder="Find a person, position or code" aria-label="Find a person, position or code" />
             </label>
 
             {colors.legend.length || colors.hasCompanyLevel ? (
