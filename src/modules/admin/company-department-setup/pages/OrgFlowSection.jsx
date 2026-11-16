@@ -3,7 +3,7 @@
 import { useMemo, useState } from "react";
 import { Button, Input, Modal, StatusBadge } from "@/shared/components/ui";
 import { isSameId } from "../data/companyDepartmentSetup.data.js";
-import { positionLabel } from "./PositionModal.jsx";
+import { positionLabel, sharedSeatNote } from "./PositionModal.jsx";
 import styles from "./OrgFlowSection.module.css";
 
 // Department key for positions with no department (Company Head, etc.).
@@ -130,6 +130,8 @@ export default function OrgFlowSection({
   const directReports = selectedPosition
     ? companyPositions.filter((p) => (p.reports_to_ids || []).some((id) => isSameId(id, selectedPosition.position_id))) : [];
   const goToPosition = (p) => { onSelectDept(deptKeyOf(p)); onSelectPosition(p.position_id); };
+  const selectedSharedNote = selectedPosition
+    ? sharedSeatNote((selectedPosition.holders || []).length, directReports.length) : null;
 
   const steps = [
     { n: 1, label: "Company", value: selectedCompany?.comp_name || "" },
@@ -314,6 +316,10 @@ export default function OrgFlowSection({
                       "Delete Position", () => onDeletePosition?.(selectedPosition))}>Delete</Button>
                 </div>
               </div>
+
+              {selectedSharedNote ? (
+                <div className="notice-banner notice-banner-warning" role="status">{selectedSharedNote}</div>
+              ) : null}
 
               <div>
                 <div className={styles.sectionLabel}>Reporting line</div>
