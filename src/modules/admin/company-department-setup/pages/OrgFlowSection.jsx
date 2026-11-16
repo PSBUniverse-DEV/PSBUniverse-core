@@ -372,19 +372,25 @@ export default function OrgFlowSection({
         </Column>
       </div>
 
-      <Modal show={Boolean(confirmBox)} onHide={() => setConfirmBox(null)} title={confirmBox?.title || ""}
-        footer={(
-          <>
-            <Button type="button" variant="ghost" onClick={() => setConfirmBox(null)}>Cancel</Button>
-            <Button type="button" variant="danger" onClick={() => {
-              const run = confirmBox?.onConfirm;
-              setConfirmBox(null);
-              if (typeof run === "function") run();
-            }}>{confirmBox?.label || "OK"}</Button>
-          </>
-        )}>
-        <p className="mb-0">{confirmBox?.message}</p>
-      </Modal>
+      {/* Mounted only while open, like the other dialogs on this page. A dialog
+          left mounted and hidden can leave its invisible layer over the page when
+          the confirmed change redraws the screen during its fade-out, which
+          blocks every click until a refresh. */}
+      {confirmBox ? (
+        <Modal show onHide={() => setConfirmBox(null)} title={confirmBox.title || ""}
+          footer={(
+            <>
+              <Button type="button" variant="ghost" onClick={() => setConfirmBox(null)}>Cancel</Button>
+              <Button type="button" variant="danger" onClick={() => {
+                const run = confirmBox.onConfirm;
+                setConfirmBox(null);
+                if (typeof run === "function") run();
+              }}>{confirmBox.label || "OK"}</Button>
+            </>
+          )}>
+          <p className="mb-0">{confirmBox.message}</p>
+        </Modal>
+      ) : null}
     </>
   );
 }
