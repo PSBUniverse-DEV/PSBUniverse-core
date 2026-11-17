@@ -75,6 +75,7 @@ export default function OrgFlowSection({
   selectedDeptKey, onSelectDept, selectedPositionId, onSelectPosition,
   onAddPosition, onEditPosition, onTogglePosition, onDeletePosition, onRemovePerson, onMovePosition,
 }) {
+  const [companySearch, setCompanySearch] = useState("");
   const [deptSearch, setDeptSearch] = useState("");
   const [confirmBox, setConfirmBox] = useState(null);
   const askConfirm = (title, message, label, onConfirm) => setConfirmBox({ title, message, label, onConfirm });
@@ -95,6 +96,12 @@ export default function OrgFlowSection({
     companyPositions.forEach((p) => counts.set(deptKeyOf(p), (counts.get(deptKeyOf(p)) || 0) + 1));
     return counts;
   }, [companyPositions]);
+  const visibleCompanies = useMemo(() => {
+    const q = companySearch.trim().toLowerCase();
+    if (!q) return decoratedCompanies;
+    return decoratedCompanies.filter((c) => [c.comp_name, c.comp_short_name, c.comp_code]
+      .some((v) => String(v || "").toLowerCase().includes(q)));
+  }, [decoratedCompanies, companySearch]);
   const visibleDepartments = useMemo(() => {
     const q = deptSearch.trim().toLowerCase();
     if (!q) return decoratedDepartments;
@@ -180,20 +187,28 @@ export default function OrgFlowSection({
             </>
           )}
         >
-          {decoratedCompanies.length === 0 ? <Hint>No companies yet.</Hint> : decoratedCompanies.map((c) => {
-            const active = isSameId(c.comp_id, selectedCompany?.comp_id);
-            const meta = [c.comp_code, shortNameOf(c), `${positionCountByCompany.get(String(c.comp_id)) || 0} positions`].filter(Boolean).join(" · ");
-            return (
-              <button key={String(c.comp_id)} type="button" aria-pressed={active} disabled={isBusy}
-                className={`${styles.item} ${active ? styles.itemActive : ""}`} onClick={() => onSelectCompany(c)}>
-                <span className={styles.itemMain}>
-                  <span className={styles.itemName}>{c.comp_name}</span>
-                  <span className={styles.itemMeta}>{meta}</span>
-                </span>
-                <RowMarker row={c} />
-              </button>
-            );
-          })}
+          {decoratedCompanies.length === 0 ? <Hint>No companies yet.</Hint> : (
+            <>
+              <Input type="search" value={companySearch} onChange={(e) => setCompanySearch(e.target.value)}
+                placeholder="Search companies" aria-label="Search companies" className="mb-1" />
+              {visibleCompanies.length === 0 ? <Hint>No companies found.</Hint> : visibleCompanies.map((c) => {
+                const active = isSameId(c.comp_id, selectedCompany?.comp_id);
+                return (
+                  <button key={String(c.comp_id)} type="button" aria-pressed={active} disabled={isBusy}
+                    className={`${styles.item} ${active ? styles.itemActive : ""}`} onClick={() => onSelectCompany(c)}>
+                    <span className={styles.itemMain}>
+                      <span className={styles.itemName}>{c.comp_name}</span>
+                      {c.comp_code ? <span className={styles.itemMeta}>{c.comp_code}</span> : null}
+                    </span>
+                    <span className="d-flex align-items-center gap-1">
+                      <RowMarker row={c} />
+                      <span className={styles.count}>{positionCountByCompany.get(String(c.comp_id)) || 0}</span>
+                    </span>
+                  </button>
+                );
+              })}
+            </>
+          )}
         </Column>
 
         {/* 2 · Department */}
@@ -232,8 +247,9 @@ export default function OrgFlowSection({
                 return (
                   <button key={String(d.dept_id)} type="button" aria-pressed={active}
                     className={`${styles.item} ${active ? styles.itemActive : ""}`} onClick={() => onSelectDept(String(d.dept_id))}>
-                    <span className={styles.itemName}>
-                      {d.dept_name}{d.dept_code ? <span className="text-muted small fw-normal ms-1">{d.dept_code}</span> : null}
+                    <span className={styles.itemMain}>
+                      <span className={styles.itemName}>{d.dept_name}</span>
+                      {d.dept_code ? <span className={styles.itemMeta}>{d.dept_code}</span> : null}
                     </span>
                     <span className="d-flex align-items-center gap-1">
                       <RowMarker row={d} />
