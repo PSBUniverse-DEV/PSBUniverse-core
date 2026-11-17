@@ -151,16 +151,46 @@
   overflow: hidden;
 }
 
+/* Pan/zoom area: drag to move, wheel to zoom (OrgChartView.jsx). */
 .viewport {
+  position: relative;
   flex: 1 1 auto;
   min-width: 0;
-  overflow: auto;
-  padding: 28px 24px 72px;
+  overflow: hidden;
+  cursor: grab;
+  touch-action: none;
+  user-select: none;
+}
+
+.viewportDragging {
+  cursor: grabbing;
 }
 
 .tree {
+  position: absolute;
+  top: 0;
+  left: 0;
   width: max-content;
-  margin: 0 auto;
+  transform-origin: 0 0;
+}
+
+/* Dashed lines to extra bosses, drawn behind the cards. */
+.extraLines {
+  position: absolute;
+  top: 0;
+  left: 0;
+  width: 100%;
+  height: 100%;
+  overflow: visible;
+  pointer-events: none;
+  z-index: 0;
+}
+
+.extraLine {
+  fill: none;
+  stroke: #94a3b8;
+  stroke-width: 1.5;
+  stroke-dasharray: 5 4;
 }
 
 .cornerLeft {
@@ -302,6 +332,8 @@
 
 /* ── Cards ── */
 .card {
+  position: relative;
+  z-index: 1;
   display: flex;
   flex-direction: column;
   gap: 10px;

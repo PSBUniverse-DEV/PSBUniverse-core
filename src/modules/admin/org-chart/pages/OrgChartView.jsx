@@ -1,6 +1,6 @@
 "use client";
 
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import Link from "next/link";
 import { Button } from "@/shared/components/ui";
 import styles from "./OrgChartView.module.css";
@@ -25,6 +25,8 @@ const NEUTRAL_COLOR = { dot: "#475569", bg: "#f1f5f9", fg: "#334155" };
 const ZOOM_MIN = 0.4;
 const ZOOM_MAX = 1.5;
 const ZOOM_STEP = 0.1;
+const WHEEL_ZOOM_FACTOR = 1.1;
+const DRAG_THRESHOLD_PX = 5;
 
 function initialsOf(name) {
   return String(name || "").split(/\s+/).filter(Boolean).slice(0, 2).map((w) => w[0]).join("").toUpperCase() || "?";
@@ -72,6 +74,23 @@ function parentIdsOf(nodes, out = []) {
   return out;
 }
 
+function clampZoom(value) {
+  return Math.min(ZOOM_MAX, Math.max(ZOOM_MIN, value));
+}
+
+// Position of el inside root in chart units (ignores the zoom/pan transform).
+function offsetIn(el, root) {
+  let x = 0;
+  let y = 0;
+  let node = el;
+  while (node && node !== root) {
+    x += node.offsetLeft;
+    y += node.offsetTop;
+    node = node.offsetParent;
+  }
+  return node === root ? { x, y } : null;
+}
+
 function VacantIcon({ size = 18 }) {
   return (
     <svg width={size} height={size} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" aria-hidden="true">
@@ -102,7 +121,12 @@ export default function OrgChartView({
   const [branch, setBranch] = useState("");
   const [query, setQuery] = useState("");
   const [collapsed, setCollapsed] = useState(() => new Set());
-  const [zoom, setZoom] = useState(1);
+  // Pan (x, y in screen px) and zoom of the chart inside the viewport.
+  const [view, setView] = useState({ x: 0, y: 0, zoom: 1 });
+  const zoom = view.zoom;
+  const [isDragging, setIsDragging] = useState(false);
+  const dragRef = useRef(null); // { startX, startY, x, y, moved, pointerId }
+  const [extraLines, setExtraLines] = useState([]);
   const [selected, setSelected] = useState(null); // { positionId, userId }
   const viewportRef = useRef(null);
   const treeRef = useRef(null);
@@ -148,10 +172,24 @@ export default function OrgChartView({
     setCollapsed(new Set());
   }, [focusMe, mySeat]);
 
+  // Move the chart so the picked card is in view (only when it is outside it).
   useEffect(() => {
     if (!selected || !selected.positionId) return;
-    const element = document.querySelector(`[data-position-id="${String(selected.positionId)}"]`);
-    element?.scrollIntoView({ behavior: "smooth", block: "center" });
+    const box = viewportRef.current, el = treeRef.current;
+    const card = el?.querySelector(`[data-position-id="${String(selected.positionId)}"]`);
+    if (!box || !card) return;
+    const boxRect = box.getBoundingClientRect();
+    const cardRect = card.getBoundingClientRect();
+    const inView = cardRect.left >= boxRect.left && cardRect.right <= boxRect.right
+      && cardRect.top >= boxRect.top && cardRect.bottom <= boxRect.bottom;
+    if (inView) return;
+    const at = offsetIn(card, el);
+    if (!at) return;
+    setView((v) => ({
+      ...v,
+      x: box.clientWidth / 2 - (at.x + card.offsetWidth / 2) * v.zoom,
+      y: box.clientHeight / 2 - (at.y + card.offsetHeight / 2) * v.zoom,
+    }));
   }, [selected]);
 
   const chooseCompany = (id) => {
@@ -168,16 +206,110 @@ export default function OrgChartView({
     return next;
   });
 
-  const changeZoom = (delta) => setZoom((z) => Math.min(ZOOM_MAX, Math.max(ZOOM_MIN, Math.round((z + delta) * 10) / 10)));
-  const fitToScreen = useCallback(() => {
+  // Place the chart at a zoom level: centered across, near the top.
+  const placeAt = useCallback((nextZoom) => {
     const box = viewportRef.current, el = treeRef.current;
     if (!box || !el) return;
-    const rect = el.getBoundingClientRect();
-    const naturalW = rect.width / zoom, naturalH = rect.height / zoom;
-    if (!naturalW || !naturalH) return;
-    const next = Math.min(1, (box.clientWidth - 48) / naturalW, (box.clientHeight - 96) / naturalH);
-    setZoom(Math.max(ZOOM_MIN, Math.floor(next * 100) / 100));
-  }, [zoom]);
+    const z = clampZoom(nextZoom);
+    setView({ zoom: z, x: Math.max(24, (box.clientWidth - el.offsetWidth * z) / 2), y: 28 });
+  }, []);
+
+  // Zoom while keeping the chart point under (px, py) — viewport px — in place.
+  const zoomAt = useCallback((nextZoom, px, py) => setView((v) => {
+    const z = clampZoom(typeof nextZoom === "function" ? nextZoom(v.zoom) : nextZoom);
+    if (z === v.zoom) return v;
+    return { zoom: z, x: px - ((px - v.x) / v.zoom) * z, y: py - ((py - v.y) / v.zoom) * z };
+  }), []);
+
+  const changeZoom = (delta) => {
+    const box = viewportRef.current;
+    if (!box) return;
+    zoomAt((z) => Math.round((z + delta) * 10) / 10, box.clientWidth / 2, box.clientHeight / 2);
+  };
+  const fitToScreen = useCallback(() => {
+    const box = viewportRef.current, el = treeRef.current;
+    if (!box || !el || !el.offsetWidth || !el.offsetHeight) return;
+    placeAt(Math.floor(Math.min(1, (box.clientWidth - 48) / el.offsetWidth, (box.clientHeight - 96) / el.offsetHeight) * 100) / 100);
+  }, [placeAt]);
+
+  // New company or branch: start at 100%, centered.
+  useLayoutEffect(() => { placeAt(1); }, [companyId, branch, placeAt]);
+
+  // Mouse wheel zooms toward the pointer. Added by hand: React's onWheel is passive and can't stop the page scrolling.
+  useEffect(() => {
+    const box = viewportRef.current;
+    if (!box) return undefined;
+    const onWheel = (e) => {
+      e.preventDefault();
+      const rect = box.getBoundingClientRect();
+      zoomAt((z) => z * (e.deltaY < 0 ? WHEEL_ZOOM_FACTOR : 1 / WHEEL_ZOOM_FACTOR), e.clientX - rect.left, e.clientY - rect.top);
+    };
+    box.addEventListener("wheel", onWheel, { passive: false });
+    return () => box.removeEventListener("wheel", onWheel);
+  }, [zoomAt, companies.length]);
+
+  // Drag anywhere to move the chart. A press that moves less than DRAG_THRESHOLD_PX is a normal click.
+  const onPointerDown = (e) => {
+    if (e.button !== 0) return;
+    dragRef.current = { startX: e.clientX, startY: e.clientY, x: view.x, y: view.y, moved: false, pointerId: e.pointerId };
+  };
+  const onPointerMove = (e) => {
+    const d = dragRef.current;
+    if (!d || d.pointerId !== e.pointerId) return;
+    const dx = e.clientX - d.startX, dy = e.clientY - d.startY;
+    if (!d.moved) {
+      if (Math.hypot(dx, dy) < DRAG_THRESHOLD_PX) return;
+      d.moved = true;
+      e.currentTarget.setPointerCapture(e.pointerId);
+      setIsDragging(true);
+    }
+    setView((v) => ({ ...v, x: d.x + dx, y: d.y + dy }));
+  };
+  const endDrag = (e) => {
+    const d = dragRef.current;
+    if (!d || d.pointerId !== e.pointerId) return;
+    if (!d.moved) { dragRef.current = null; return; }
+    setIsDragging(false);
+    // Kept until the click that follows a drag is swallowed below.
+    window.setTimeout(() => { dragRef.current = null; }, 0);
+  };
+  const onClickCapture = (e) => {
+    if (!dragRef.current?.moved) return;
+    e.stopPropagation();
+    e.preventDefault();
+    dragRef.current = null;
+  };
+
+  // Dashed lines from each extra boss ("Also reports to") to the card, measured from the drawn cards.
+  useLayoutEffect(() => {
+    const el = treeRef.current;
+    if (!el) { setExtraLines([]); return undefined; }
+    const measure = () => {
+      const cardOf = (id) => el.querySelector(`[data-position-id="${String(id)}"]`);
+      const lines = [];
+      const walk = (nodes) => nodes.forEach((node) => {
+        const child = cardOf(node.position.position_id);
+        const childAt = child && offsetIn(child, el);
+        node.also.forEach((boss) => {
+          const bossCard = cardOf(boss.position_id);
+          const bossAt = bossCard && offsetIn(bossCard, el);
+          if (!childAt || !bossAt) return; // one of them is collapsed or filtered out
+          lines.push({
+            key: `${boss.position_id}-${node.position.position_id}`,
+            x1: bossAt.x + bossCard.offsetWidth / 2, y1: bossAt.y + bossCard.offsetHeight,
+            x2: childAt.x + child.offsetWidth / 2, y2: childAt.y,
+          });
+        });
+        walk(node.children);
+      });
+      walk(tree);
+      setExtraLines(lines);
+    };
+    measure();
+    const observer = new ResizeObserver(measure);
+    observer.observe(el);
+    return () => observer.disconnect();
+  }, [tree, collapsed, q]);
 
   // ── Details panel ──
   const selectedPosition = selected ? positionById.get(String(selected.positionId)) || null : null;
@@ -369,9 +501,25 @@ export default function OrgChartView({
 
           <div className={styles.body}>
             <section className={styles.chartBox} aria-label="Chart">
-              <div ref={viewportRef} className={styles.viewport}>
+              <div ref={viewportRef} className={`${styles.viewport} ${isDragging ? styles.viewportDragging : ""}`}
+                onPointerDown={onPointerDown} onPointerMove={onPointerMove} onPointerUp={endDrag} onPointerCancel={endDrag}
+                onClickCapture={onClickCapture}>
                 {tree.length ? (
-                  <div ref={treeRef} className={styles.tree} style={{ zoom }}>{renderLevel(tree, true)}</div>
+                  <div ref={treeRef} className={styles.tree}
+                    style={{ transform: `translate(${view.x}px, ${view.y}px) scale(${view.zoom})` }}>
+                    {extraLines.length ? (
+                      <svg className={styles.extraLines} aria-hidden="true">
+                        {extraLines.map((l) => {
+                          const midY = (l.y1 + l.y2) / 2;
+                          return (
+                            <path key={l.key} className={styles.extraLine}
+                              d={`M ${l.x1} ${l.y1} C ${l.x1} ${midY}, ${l.x2} ${midY}, ${l.x2} ${l.y2}`} />
+                          );
+                        })}
+                      </svg>
+                    ) : null}
+                    {renderLevel(tree, true)}
+                  </div>
                 ) : (
                   <div className={styles.emptyBox}>No positions yet for this company. Add them in Organization Setup.</div>
                 )}
