@@ -34,6 +34,7 @@ const ELBOW = 28; // a line turns this far above the card it goes into
 const CORNER = 10;
 const DEFAULT_CARD_HEIGHT = 112; // used until the real height is measured
 const LAYOUT_PASSES = 8;
+const LANE_SPACING = 14; // a boss whose sideways line would overlap another's runs this much higher
 
 function initialsOf(name) {
   return String(name || "").split(/\s+/).filter(Boolean).slice(0, 2).map((w) => w[0]).join("").toUpperCase() || "?";
@@ -87,9 +88,8 @@ function placeInRow(wanted, gap) {
 }
 
 // Down from the boss, across, then down into the card, with rounded corners.
-function elbowPath(x1, y1, x2, y2) {
+function elbowPath(x1, y1, x2, y2, turnY) {
   if (Math.abs(x2 - x1) < 1) return `M ${x1} ${y1} V ${y2}`;
-  const turnY = y2 - ELBOW;
   const dir = x2 > x1 ? 1 : -1;
   const r = Math.min(CORNER, Math.abs(x2 - x1) / 2, Math.max(0, turnY - y1));
   return `M ${x1} ${y1} V ${turnY - r} Q ${x1} ${turnY} ${x1 + dir * r} ${turnY}`
@@ -164,10 +164,48 @@ function layoutChart(graph, collapsed, showAll, heights) {
   }
   const minX = Math.min(...x.values());
 
-  // Rows go down by the tallest card in each row.
+  // A card with several bosses gets one entry point per boss across its top
+  // edge, left to right like the bosses, so their lines never meet.
+  const entryX = new Map(); // `${bossId}>${childId}` → x
+  ordered.forEach((id) => {
+    const bosses = bossesOf(id).sort((a, b) => x.get(a) - x.get(b));
+    bosses.forEach((bossId, i) => {
+      entryX.set(`${bossId}>${id}`, x.get(id) + (CARD_WIDTH * (i + 1)) / (bosses.length + 1));
+    });
+  });
+
+  // Each boss's lines into a row share one lane. Bosses whose sideways lines
+  // would overlap get separate lanes (a step higher), so one boss's line never
+  // looks like it reaches another boss's reports.
+  const laneOf = new Map(); // `${bossId}>${row}` → lane (0 = lowest)
+  const lanesInRow = rows.map(() => 1);
+  rows.forEach((ids, r) => {
+    const spans = new Map(); // bossId → [from, to]
+    ids.forEach((id) => bossesOf(id).forEach((bossId) => {
+      const bossMiddle = x.get(bossId) + CARD_WIDTH / 2;
+      const entry = entryX.get(`${bossId}>${id}`);
+      const span = spans.get(bossId) || [bossMiddle, bossMiddle];
+      spans.set(bossId, [Math.min(span[0], entry), Math.max(span[1], entry)]);
+    }));
+    const laneEnds = []; // right end of the last span on each lane
+    [...spans.entries()].sort((a, b) => a[1][0] - b[1][0]).forEach(([bossId, [from, to]]) => {
+      let lane = laneEnds.findIndex((end) => from > end + LANE_SPACING);
+      if (lane === -1) {
+        lane = laneEnds.length;
+        laneEnds.push(to);
+      } else {
+        laneEnds[lane] = to;
+      }
+      laneOf.set(`${bossId}>${r}`, lane);
+    });
+    lanesInRow[r] = Math.max(1, laneEnds.length);
+  });
+
+  // Rows go down by the tallest card in each row, plus room for extra lanes above a row.
   const rowTop = [];
   let top = 0;
   rows.forEach((ids, r) => {
+    if (r > 0) top += (lanesInRow[r] - 1) * LANE_SPACING;
     rowTop[r] = top;
     top += Math.max(...ids.map(heightOf)) + ROW_GAP;
   });
@@ -183,9 +221,14 @@ function layoutChart(graph, collapsed, showAll, heights) {
   const lines = [];
   nodes.forEach((child) => bossesOf(child.id).forEach((bossId) => {
     const boss = nodeById.get(bossId);
+    const lane = laneOf.get(`${bossId}>${rowById.get(child.id)}`) || 0;
     lines.push({
       key: `${bossId}-${child.id}`,
-      d: elbowPath(boss.x + CARD_WIDTH / 2, boss.y + heightOf(bossId), child.x + CARD_WIDTH / 2, child.y),
+      d: elbowPath(
+        boss.x + CARD_WIDTH / 2, boss.y + heightOf(bossId),
+        entryX.get(`${bossId}>${child.id}`) - minX, child.y,
+        child.y - ELBOW - lane * LANE_SPACING,
+      ),
     });
   }));
 
