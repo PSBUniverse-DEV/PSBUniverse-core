@@ -369,6 +369,9 @@ export { withModuleAuth, withSessionAuth } from "@/core/auth/middleware.auth";
 // 5. Write files — skip existing (never overwrite dev work)
 // ---------------------------------------------------------------------------
 
+// The npm packages this module needs beyond core's (npm run add-package -- <module> <package>).
+const modulePackagesContent = JSON.stringify({ dependencies: {}, devDependencies: {} }, null, 2) + "\n";
+
 const files = [
   { rel: "index.js", content: indexContent },
   { rel: `pages/${pascal}Page.js`, content: pageContent },
@@ -376,6 +379,7 @@ const files = [
   { rel: `data/${camel}.actions.js`, content: actionsContent },
   { rel: `data/${camel}.data.js`, content: dataContent },
   { rel: `middleware/${camel}.middleware.js`, content: middlewareContent },
+  { rel: "module-packages.json", content: modulePackagesContent },
 ];
 
 if (isExisting) {
@@ -471,6 +475,7 @@ console.log(`    ☐ DB: psb_s_appcard → add card with route_path = "${routePa
 console.log(`    ☐ DB: psb_m_appcardroleaccess → assign roles`);
 console.log(`    ☐ SSO: Set NEXT_PUBLIC_COOKIE_DOMAIN in .env.local (e.g. .psbuniverse.com)`);
 console.log(`    ☐ SSO: Protect API routes with withModuleAuth() in middleware/${camel}.middleware.js`);
+console.log(`    ☐ Packages: npm run add-package -- ${moduleDirRel.replace(/^src\/modules\//, "")} <package>  (recorded in module-packages.json)`);
 console.log(`    ☐ Run \`npm run dev\` → visit http://localhost:3000${routePath}`);
 console.log(`    ☐ Verify: page loads with "${displayName}" heading`);
 console.log(`    ☐ Verify: unauthorized user sees "No Access"`);

@@ -5,6 +5,8 @@
   "type": "module",
   "scripts": {
     "create-module": "node scripts/create-module.js",
+    "add-package": "node scripts/module-package.mjs add",
+    "remove-package": "node scripts/module-package.mjs remove",
     "gen:routes": "node scripts/generate-routes.js",
     "new-page": "node scripts/generate-routes.js newpage",
     "predev": "node scripts/generate-routes.js",

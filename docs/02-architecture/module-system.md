@@ -461,6 +461,24 @@ Use `hasCardAccess()` to hide/disable features the user shouldn't see.
 
 ---
 
+## Module Packages
+
+Core is the shell; each module is its own app and may need npm packages core does not use (for example a map library). Each module lists those packages in its own `module-packages.json`, next to its `index.js`:
+
+    {
+      "dependencies": { "maplibre-gl": "^5.24.0" },
+      "devDependencies": {}
+    }
+
+- **Add a package to a module:** `npm run add-package -- <module> <package> [--dev]`, e.g. `npm run add-package -- project-map maplibre-gl`. It installs the package and records it in the module's list. A package that is already installed is only recorded, never upgraded. To ask for a version: `some-package@1.4.2`.
+- **Remove:** `npm run remove-package -- <module> <package>`. It is taken off the module's list and uninstalled only when core and no other module still list it.
+- The project's `package.json` still lists everything installed; use the two commands above so both stay in step.
+- **Sync** (`scripts/sync-repo.ps1`) installs any package that core or a module lists and `package.json` lacks, and prints installed packages nobody lists. Nothing is removed automatically.
+- **Copying a module** into another project brings its `module-packages.json`; the next sync installs its packages.
+- The file is not called `package.json` on purpose: that name inside a module folder would change how Node loads the module's files.
+
+---
+
 ## What Modules Must Not Do
 
 1. Modify core files.

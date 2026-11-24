@@ -1,5 +1,7 @@
-// sync-core-deps.mjs - Adds npm dependencies that core's package.json has
-// and this repo's package.json is missing.
+// sync-core-deps.mjs - Adds npm dependencies that core's package.json, or any
+// module's module-packages.json (src/modules/**), lists and this repo's
+// package.json is missing. Also prints installed packages that neither core nor
+// any module lists, so each can be given an owner (npm run add-package).
 // Usage: node scripts/sync-core-deps.mjs   (run from the project root)
 //
 // Reads core's list from the fetched core remote (core/main:package.json).
@@ -11,6 +13,7 @@
 
 import { execFileSync } from "node:child_process";
 import { readFileSync, writeFileSync } from "node:fs";
+import { readModulePackages } from "./module-packages-lib.mjs";
 
 const PACKAGE_PATH = "package.json";
 const SECTIONS = ["dependencies", "devDependencies"];
@@ -33,12 +36,32 @@ const localPackage = JSON.parse(raw);
 const declared = new Set(SECTIONS.flatMap((section) => Object.keys(localPackage[section] || {})));
 const added = [];
 
-for (const section of SECTIONS) {
-  for (const [name, range] of Object.entries(corePackage[section] || {})) {
-    if (declared.has(name)) continue;
-    localPackage[section] = { ...(localPackage[section] || {}), [name]: range };
-    added.push(`${name}@${range} (${section})`);
+let modulePackages;
+try {
+  modulePackages = readModulePackages(process.cwd());
+} catch (error) {
+  console.error(`  ${error.message}`);
+  process.exit(1);
+}
+
+// What is required: core's packages, then each module's own packages.
+const sources = [
+  { label: "core", lists: corePackage },
+  ...modulePackages.map((entry) => ({ label: `module ${entry.module}`, lists: entry })),
+];
+
+for (const source of sources) {
+  for (const section of SECTIONS) {
+    for (const [name, range] of Object.entries(source.lists[section] || {})) {
+      if (declared.has(name)) continue;
+      declared.add(name);
+      localPackage[section] = { ...(localPackage[section] || {}), [name]: range };
+      added.push(`${name}@${range} (${section}, needed by ${source.label})`);
+    }
   }
+}
+
+for (const section of SECTIONS) {
   if (localPackage[section]) {
     localPackage[section] = Object.fromEntries(
       Object.entries(localPackage[section]).sort(([a], [b]) => a.localeCompare(b, "en")),
@@ -46,12 +69,21 @@ for (const section of SECTIONS) {
   }
 }
 
+// Installed packages that neither core nor any module lists: shown so each one
+// can be given an owner. Nothing is removed.
+const listed = new Set(sources.flatMap((source) => SECTIONS.flatMap((section) => Object.keys(source.lists[section] || {}))));
+const unlisted = [...declared].filter((name) => !listed.has(name)).sort();
+if (unlisted.length > 0) {
+  console.log("  Installed but not listed by core or any module (record with: npm run add-package -- <module> <package>):");
+  for (const name of unlisted) console.log(`    ? ${name}`);
+}
+
 if (added.length === 0) {
-  console.log("  Core dependencies OK.");
+  console.log("  Core and module dependencies OK.");
   process.exit(0);
 }
 
 writeFileSync(PACKAGE_PATH, JSON.stringify(localPackage, null, 2).replace(/\n/g, eol) + eol);
-console.log("  Added dependencies required by core:");
+console.log("  Added dependencies required by core or a module:");
 for (const entry of added) console.log(`    + ${entry}`);
 process.exit(10);
