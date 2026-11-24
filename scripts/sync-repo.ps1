@@ -5,6 +5,10 @@
 # After the merge, every file that exists in core is replaced with core's copy
 # (core always wins); files that exist only in this repo are left alone.
 # It also adds any npm dependency core requires that package.json is missing.
+# Package files are never merged as text: packages installed since the last
+# commit are committed first (so they never go into the stash), package.json
+# conflicts are combined as data (scripts/merge-package-json.mjs), and
+# package-lock.json is rebuilt with npm install.
 # It uses MERGE (not rebase) so commit hashes are preserved and
 # no force-push is needed — safe for multi-developer workflows.
 
@@ -19,6 +23,8 @@ $exitCode = 0
 $locationPushed = $false
 # Per-app files that are never replaced by core's copy during sync.
 $coreSyncExceptions = @('package.json', 'package-lock.json', '.vscode/settings.json', 'src/app/rewrites.json')
+# Package files: never merged as text, never stashed.
+$packageFiles = @('package.json', 'package-lock.json')
 
 function Invoke-SyncGit {
     param([string[]]$GitArguments)
@@ -26,6 +32,38 @@ function Invoke-SyncGit {
     & git @GitArguments
     if ($LASTEXITCODE -ne 0) {
         throw "git $($GitArguments -join ' ') failed (exit $LASTEXITCODE)."
+    }
+}
+
+# Merges origin/main. A conflict in package.json is combined as data and
+# package-lock.json is rebuilt with npm install; any other conflict stops the sync.
+function Invoke-OriginMerge {
+    & git merge --ff --no-commit --no-edit origin/main
+    $mergeExit = $LASTEXITCODE
+    $conflicts = @(& git -c core.quotepath=false diff --name-only --diff-filter=U | Where-Object { $_ })
+    $otherConflicts = @($conflicts | Where-Object { $packageFiles -notcontains $_ })
+    if ($otherConflicts.Count -gt 0) {
+        throw "Merge conflicts in: $($otherConflicts -join ', '). Resolve them, commit, then run sync again."
+    }
+    if ($mergeExit -ne 0 -and $conflicts.Count -eq 0) {
+        throw 'git merge origin/main failed.'
+    }
+    if ($conflicts -contains 'package.json') {
+        & node scripts/merge-package-json.mjs
+        if ($LASTEXITCODE -ne 0) { throw 'Could not combine package.json from both sides.' }
+    }
+    if ($conflicts.Count -gt 0) {
+        if ($conflicts -contains 'package-lock.json') {
+            Invoke-SyncGit @('checkout', '--ours', '--', 'package-lock.json') | Out-Null
+        }
+        Write-Host '  Rebuilding package-lock.json from the combined package.json...' -ForegroundColor Green
+        & npm install
+        if ($LASTEXITCODE -ne 0) { throw 'npm install failed while rebuilding package-lock.json.' }
+        Invoke-SyncGit (@('add', '--') + @($packageFiles | Where-Object { Test-Path $_ })) | Out-Null
+    }
+    $originMergeHead = Invoke-SyncGit @('rev-parse', '--git-path', 'MERGE_HEAD')
+    if (Test-Path $originMergeHead) {
+        Invoke-SyncGit @('commit', '--no-edit') | Out-Null
     }
 }
 
@@ -45,7 +83,27 @@ try {
         }
     }
     Invoke-SyncGit @('remote', 'get-url', 'origin') | Out-Null
+
+    # Old copies of this script inside src (e.g. a module folder) may still rebase
+    # and force-push. Only scripts\sync-repo.ps1 should be used.
+    $oldCopies = @(Get-ChildItem -Path 'src' -Recurse -File -Filter 'sync-repo.ps1' -ErrorAction SilentlyContinue |
+        ForEach-Object { Resolve-Path -Relative $_.FullName })
+    if ($oldCopies.Count -gt 0) {
+        Write-Host 'WARNING: old copies of sync-repo.ps1 found. They may rebase and force-push - use scripts\sync-repo.ps1 only and delete these:' -ForegroundColor Red
+        foreach ($copy in $oldCopies) { Write-Host "  $copy" -ForegroundColor Red }
+    }
     $remotes = @(Invoke-SyncGit @('remote'))
+
+    # Packages installed since the last commit are committed first, on their own,
+    # so they never go into the stash: putting a stashed package-lock.json back on
+    # top of a synced one is what caused merge conflicts after a sync.
+    $dirtyPackages = @(& git status --porcelain -- @packageFiles | Where-Object { $_ })
+    if ($dirtyPackages.Count -gt 0) {
+        $packagePaths = @($packageFiles | Where-Object { Test-Path $_ })
+        Write-Host 'Committing installed packages (package.json / package-lock.json) before sync...' -ForegroundColor Yellow
+        Invoke-SyncGit (@('add', '--') + $packagePaths) | Out-Null
+        Invoke-SyncGit (@('commit', '-m', 'chore: save installed packages before sync', '--') + $packagePaths) | Out-Null
+    }
 
     $status = Invoke-SyncGit @('status', '--porcelain')
     if ($status) {
@@ -64,7 +122,7 @@ try {
 
     Write-Host "`n[1/4] Fetching and merging latest main from origin..." -ForegroundColor Green
     Invoke-SyncGit @('fetch', 'origin', 'main')
-    Invoke-SyncGit @('merge', '--ff', '--no-edit', 'origin/main')
+    Invoke-OriginMerge
 
     if ($remotes -contains 'core') {
         Write-Host "`n[2/4] Refreshing core-main from core remote..." -ForegroundColor Green
@@ -133,8 +191,8 @@ try {
                 Write-Host '  Installing packages added from core...' -ForegroundColor Green
                 & npm install
                 if ($LASTEXITCODE -ne 0) { throw 'npm install failed after adding core dependencies.' }
-                $packageFiles = @('package.json', 'package-lock.json') | Where-Object { Test-Path $_ }
-                Invoke-SyncGit (@('add', '--') + @($packageFiles)) | Out-Null
+                $existingPackageFiles = @($packageFiles | Where-Object { Test-Path $_ })
+                Invoke-SyncGit (@('add', '--') + $existingPackageFiles) | Out-Null
                 Invoke-SyncGit @('commit', '-m', 'chore: sync dependencies with core') | Out-Null
             } elseif ($LASTEXITCODE -ne 0) {
                 throw 'Core dependency check failed.'
@@ -160,7 +218,7 @@ try {
             throw 'Push failed without new remote commits. Check permissions, branch protection, or connectivity.'
         }
         Write-Host 'Remote advanced during sync; merging and retrying normal push...' -ForegroundColor Yellow
-        Invoke-SyncGit @('merge', '--ff', '--no-edit', 'origin/main')
+        Invoke-OriginMerge
     }
 } catch {
     Write-Host "ERROR: $($_.Exception.Message)" -ForegroundColor Red
