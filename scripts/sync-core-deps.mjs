@@ -2,6 +2,8 @@
 // module's module-packages.json (src/modules/**), lists and this repo's
 // package.json is missing. Also prints installed packages that neither core nor
 // any module lists, so each can be given an owner (npm run add-package).
+// Also adds npm scripts core has and this repo's package.json lacks (for
+// example add-package); a script this repo already has is never changed.
 // Usage: node scripts/sync-core-deps.mjs   (run from the project root)
 //
 // Reads core's list from the fetched core remote (core/main:package.json).
@@ -69,6 +71,14 @@ for (const section of SECTIONS) {
   }
 }
 
+// npm scripts core has and this repo lacks (e.g. add-package / remove-package).
+// Add-only: a script this repo already has keeps its own command.
+for (const [name, command] of Object.entries(corePackage.scripts || {})) {
+  if (localPackage.scripts && Object.prototype.hasOwnProperty.call(localPackage.scripts, name)) continue;
+  localPackage.scripts = { ...(localPackage.scripts || {}), [name]: command };
+  added.push(`npm script "${name}"`);
+}
+
 // Installed packages that neither core nor any module lists: shown so each one
 // can be given an owner. Nothing is removed.
 const listed = new Set(sources.flatMap((source) => SECTIONS.flatMap((section) => Object.keys(source.lists[section] || {}))));
@@ -84,6 +94,6 @@ if (added.length === 0) {
 }
 
 writeFileSync(PACKAGE_PATH, JSON.stringify(localPackage, null, 2).replace(/\n/g, eol) + eol);
-console.log("  Added dependencies required by core or a module:");
+console.log("  Added from core or a module (packages and npm scripts):");
 for (const entry of added) console.log(`    + ${entry}`);
 process.exit(10);
